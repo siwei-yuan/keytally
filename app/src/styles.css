@@ -84,7 +84,11 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
 .stat { border-top: 1px solid var(--hairline); padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
 .stat .k { color: var(--muted); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; }
-.stat .v { font-size: 22px; font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
+.stat .v {
+  font-size: 22px; font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text);
+  white-space: nowrap; display: flex; align-items: center; gap: 8px;
+}
+.stat .v .gauge { flex-shrink: 0; }
 
 .settings { border-top: 1px solid var(--hairline); padding-top: 12px; color: var(--muted); }
 .settings summary {

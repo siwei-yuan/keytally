@@ -48,6 +48,17 @@ function fmtPct(p: number | null): string {
   return p === null ? "--" : `${p}%`;
 }
 
+// 迷你仪表条:填充 = 百分比,超 100% 整条变红
+function gaugeSvg(pct: number): string {
+  const clamped = Math.min(pct, 100);
+  const over = pct >= 100;
+  const color = over ? "#d0342c" : `hsl(${(120 * (1 - clamped / 100)).toFixed(0)}, 72%, 46%)`;
+  return `<svg class="gauge" viewBox="0 0 44 12" width="44" height="12" role="img">
+    <rect x="0.5" y="1" width="43" height="10" rx="2.5" fill="#16171b" stroke="#ffffff3a"/>
+    <rect x="1.5" y="2" width="${(41 * clamped) / 100}" height="8" rx="1.5" fill="${color}"/>
+  </svg>`;
+}
+
 function fmtTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -100,12 +111,12 @@ function render() {
   }
 
   const u: SourceUsage = kb.source === 0 ? snapshot.claude : snapshot.codex;
-  const todayPct = budget > 0 ? Math.min(100, Math.round((u.today_tokens * 100) / budget)) : null;
+  const todayPct = budget > 0 ? (u.today_tokens * 100) / budget : null;
   $("#stats").innerHTML = `
     <div class="stat"><span class="k">5 小时窗口</span><span class="v">${fmtPct(u.five_hour_pct)}</span></div>
     <div class="stat"><span class="k">周限额</span><span class="v">${fmtPct(u.weekly_pct)}</span></div>
-    <div class="stat"><span class="k">今日消耗</span><span class="v">${fmtTokens(u.today_tokens)}${todayPct === null ? "" : ` (${todayPct}%)`}</span></div>
-    <div class="stat"><span class="k">状态</span><span class="v">${u.valid ? (u.active ? "🔥 干活中" : "空闲") : "未安装"}</span></div>`;
+    <div class="stat"><span class="k">今日消耗</span><span class="v">${fmtTokens(u.today_tokens)}${todayPct === null ? "" : gaugeSvg(todayPct)}</span></div>
+    <div class="stat"><span class="k">状态</span><span class="v">${u.valid ? (u.active ? "🔥干活中" : "空闲") : "未安装"}</span></div>`;
 }
 
 function fillSettings() {
