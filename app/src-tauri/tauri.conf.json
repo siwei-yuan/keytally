@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "QMK Usage Lights",
+  "productName": "KeyTally",
   "version": "0.1.0",
   "identifier": "com.ysw.qmk-usage-lights",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "QMK Usage Lights",
+        "title": "KeyTally",
         "width": 560,
         "height": 720,
         "resizable": true

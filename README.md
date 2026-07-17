@@ -1,8 +1,8 @@
 <div align="center">
 
-# ⌨️ QMK Usage Lights
+# ⌨️ KeyTally
 
-**Turn your keyboard's LEDs into a real-time AI usage meter.**
+**The tally light for your AI — usage, burn, and activity on your keyboard's LEDs.**
 
 Claude Code & Codex quota, daily burn, and live activity — rendered on any VIA/QMK keyboard's lights, with a NASApunk-styled menu bar app for macOS.
 
@@ -13,7 +13,7 @@ Claude Code & Codex quota, daily burn, and live activity — rendered on any VIA
 ![macOS](https://img.shields.io/badge/macOS-Apple%20Silicon-000?logo=apple)
 ![License](https://img.shields.io/badge/license-MIT%20%2B%20GPL--2.0-blue)
 
-<img src="docs/assets/ui-pro.png" alt="QMK Usage Lights UI" width="820"/>
+<img src="docs/assets/ui-pro.png" alt="KeyTally UI" width="820"/>
 
 </div>
 
@@ -59,8 +59,8 @@ Prebuilt releases are planned; for now, build from source (macOS, Apple Silicon)
 
 ```sh
 # prerequisites: Rust (rustup.rs) and Node 20+
-git clone https://github.com/siwei-yuan/qmk-usage-lights
-cd qmk-usage-lights/app
+git clone https://github.com/siwei-yuan/keytally
+cd keytally/app
 npm install
 npm run tauri build        # or: npm run tauri dev
 ```
