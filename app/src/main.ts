@@ -85,6 +85,17 @@ function render() {
 
   const dot = $("#conn-dot");
   dot.className = `dot ${kb.connected ? "on" : "off"}`;
+  const legend = $(".legend");
+  if (kb.backend === "pro") {
+    legend.innerHTML = `
+      <span><i class="chip" style="background:${ACCENTS[kb.source] ?? ACCENTS[0]}"></i>第 1 颗 = 数据源指示(额度模式下周限额超阈值时闪红)</span>
+      <span><i class="chip grad"></i>第 2-6 颗 = 进度条:额度=5h 用量渐变 / 今日消耗=源色填充 / 活动=整组呼吸</span>`;
+  } else {
+    legend.innerHTML = `
+      <span><i class="chip grad"></i>灯色 = 用量 0→100%</span>
+      <span><i class="chip" style="background:#e8641b"></i>活动中 = 亮这个颜色</span>
+      <span><i class="chip warn"></i>红闪 = 周限额超阈值</span>`;
+  }
   const backendLabel =
     kb.backend === "pro"
       ? "Pro 固件·逐灯"
@@ -141,6 +152,8 @@ function renderPro() {
   const key = `${kb.vid.toString(16).padStart(4, "0")}:${kb.pid.toString(16).padStart(4, "0")}`;
   const statusEl = $("#pro-status");
   const btn = $<HTMLButtonElement>("#upgrade-pro");
+  const restoreBtn = $<HTMLButtonElement>("#restore-stock");
+  restoreBtn.disabled = !(kb.connected && kb.backend === "pro");
   if (!kb.connected) {
     statusEl.textContent = "键盘未连接";
     btn.disabled = true;
@@ -232,6 +245,14 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Tauri WebView 不支持原生 confirm(),用按钮二次确认
   let upgradeArmed: number | null = null;
+  $("#restore-stock").addEventListener("click", async () => {
+    try {
+      await invoke("restore_stock");
+    } catch (e) {
+      $("#pro-progress").textContent = `❌ ${e}`;
+    }
+  });
+
   $("#upgrade-pro").addEventListener("click", async () => {
     const btn = $<HTMLButtonElement>("#upgrade-pro");
     if (upgradeArmed === null) {

@@ -49,3 +49,25 @@ pub fn dfu_flash(bin: &PathBuf) -> Result<(), String> {
         Err(format!("刷入失败: {}", text.lines().rev().take(4).collect::<Vec<_>>().join(" / ")))
     }
 }
+
+/// 从芯片读出当前(原厂)固件存档;RDP 读保护开启时会失败
+pub fn dfu_backup(dest: &PathBuf) -> Result<(), String> {
+    let out = Command::new(DFU_UTIL)
+        .args(["-a", "0", "-s", "0x08000000:0x20000", "-U"])
+        .arg(dest)
+        .output()
+        .map_err(|e| e.to_string())?;
+    let ok = dest.exists() && std::fs::metadata(dest).map(|m| m.len() > 1024).unwrap_or(false);
+    if ok {
+        Ok(())
+    } else {
+        Err(format!(
+            "读出失败(可能开启了读保护): {}",
+            String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")
+        ))
+    }
+}
+
+pub fn stock_backup_path(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join("stock-firmware.bin")
+}

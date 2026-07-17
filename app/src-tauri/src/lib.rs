@@ -206,6 +206,32 @@ fn backup_keymap(app: tauri::State<Arc<App>>) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn restore_stock(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Result<(), String> {
+    let stock = flash::stock_backup_path(app.config_path.parent().unwrap_or(std::path::Path::new(".")));
+    if !stock.exists() {
+        return Err("没有原厂固件存档".into());
+    }
+    let app = app.inner().clone();
+    std::thread::spawn(move || {
+        let emit = |msg: &str| {
+            let _ = handle.emit("pro-progress", msg.to_string());
+        };
+        emit("① 进入 bootloader…(Pro 固件支持软件跳转)");
+        let _ = app.hid_tx.send(hid::Cmd::BootloaderJump);
+        std::thread::sleep(Duration::from_secs(2));
+        if let Err(e) = flash::wait_for_dfu(Duration::from_secs(15)) {
+            return emit(&format!("❌ {e}"));
+        }
+        emit("② 刷回原厂固件…");
+        if let Err(e) = flash::dfu_flash(&stock) {
+            return emit(&format!("❌ {e}"));
+        }
+        emit("✅ 已还原原厂固件,键盘将自动重启");
+    });
+    Ok(())
+}
+
+#[tauri::command]
 fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Result<(), String> {
     let (vid, pid) = {
         let sh = app.shared.lock().unwrap();
@@ -251,6 +277,13 @@ fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resu
                     }
                 }
                 _ => return fail("临时刷机键写入失败;键盘未受影响".into()),
+            }
+        }
+        emit("④ 备份原厂固件…");
+        let stock = flash::stock_backup_path(app.config_path.parent().unwrap_or(std::path::Path::new(".")));
+        if !stock.exists() {
+            if let Err(e) = flash::dfu_backup(&stock) {
+                emit(&format!("④ 原厂固件读出失败({e}),继续刷入;之后可还原为开源 VIA 固件"));
             }
         }
         emit("④ 刷入 Pro 固件…(约 10 秒,勿拔线)");
@@ -486,7 +519,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config, backup_keymap, upgrade_to_pro])
+        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config, backup_keymap, upgrade_to_pro, restore_stock])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
