@@ -36,6 +36,8 @@ pub enum Cmd {
     DumpKeymap(std::sync::mpsc::Sender<Result<(Vec<u8>, Vec<u8>), String>>),
     /// 写回键位表 + 宏
     RestoreKeymap((Vec<u8>, Vec<u8>), std::sync::mpsc::Sender<Result<(), String>>),
+    /// VIA 0x05:改单个键(临时注入 QK_BOOT 用,刷机后 Restore 会还原)
+    SetKeycode { layer: u8, row: u8, col: u8, kc: u16, reply: std::sync::mpsc::Sender<Result<(), String>> },
     /// VIA 0x0B:跳进 bootloader(DFU),设备会立即断开
     BootloaderJump,
     /// 恢复灯效并结束线程(app 退出前调用)
@@ -340,6 +342,16 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                         Some((dev, _)) => via_restore_keymap(dev, &keymap).and_then(|()| {
                             if macros.is_empty() { Ok(()) } else { via_chunked_write(dev, 0x0F, &macros) }
                         }),
+                        None => Err("keyboard not connected".into()),
+                    };
+                    let _ = reply.send(r);
+                }
+                Cmd::SetKeycode { layer, row, col, kc, reply } => {
+                    let r = match &conn {
+                        Some((dev, _)) => {
+                            let req = [0x05, layer, row, col, (kc >> 8) as u8, kc as u8];
+                            handled(xfer(dev, &req, 4)).map(|_| ()).ok_or("set keycode failed".into())
+                        }
                         None => Err("keyboard not connected".into()),
                     };
                     let _ = reply.send(r);

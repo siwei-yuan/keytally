@@ -233,12 +233,25 @@ fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resu
             }
             Err(e) => return fail(format!("备份失败,中止:{e}")),
         };
-        emit("② 进入 bootloader…");
+        emit("② 尝试软件进入 bootloader…");
         let _ = app.hid_tx.send(hid::Cmd::BootloaderJump);
         std::thread::sleep(Duration::from_secs(2));
         emit("③ 等待 DFU 设备…");
-        if let Err(e) = flash::wait_for_dfu(Duration::from_secs(30)) {
-            return fail(e);
+        if flash::wait_for_dfu(Duration::from_secs(8)).is_err() {
+            // 原厂固件禁用了软件跳转:临时把 layer1 的 Esc 位写成 QK_BOOT,让用户按 Fn+Esc
+            emit("③ 固件不响应软件跳转,改用按键方案…");
+            std::thread::sleep(Duration::from_secs(4)); // 等 HID 线程重连
+            let (tx, rx) = std::sync::mpsc::channel();
+            let _ = app.hid_tx.send(hid::Cmd::SetKeycode { layer: 1, row: 0, col: 0, kc: 0x7C00, reply: tx });
+            match rx.recv_timeout(Duration::from_secs(10)) {
+                Ok(Ok(())) => {
+                    emit("③ 请在键盘上按 Fn+Esc 进入刷机模式(等待 120 秒)…");
+                    if let Err(e) = flash::wait_for_dfu(Duration::from_secs(120)) {
+                        return fail(format!("{e};最后手段:PCB 背面 reset 键"));
+                    }
+                }
+                _ => return fail("临时刷机键写入失败;键盘未受影响".into()),
+            }
         }
         emit("④ 刷入 Pro 固件…(约 10 秒,勿拔线)");
         if let Err(e) = flash::dfu_flash(&bin) {
