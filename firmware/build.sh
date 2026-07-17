@@ -3,6 +3,9 @@
 # 用法: ./build.sh [flash]
 set -euo pipefail
 
+# brew 的 ARM 交叉工具链是 keg-only,不在默认 PATH
+export PATH="/opt/homebrew/opt/arm-none-eabi-gcc@8/bin:/opt/homebrew/opt/arm-none-eabi-binutils/bin:/opt/homebrew/bin:$PATH"
+
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 QMK_HOME="${QMK_HOME:-$HOME/qmk_firmware}"
 KB=gray_studio/think65v3
