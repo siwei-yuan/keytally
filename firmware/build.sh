@@ -18,9 +18,15 @@ mkdir -p "$KM_DIR"
 cp "$REPO"/firmware/think65v3/* "$KM_DIR/"
 cp "$REPO"/firmware/common/usage_lights.{c,h} "$KM_DIR/"
 
+# 纯净 VIA 固件(「还原原厂」的回退目标)
+PLAIN_DIR="$QMK_HOME/keyboards/$KB/keymaps/via_plain"
+mkdir -p "$PLAIN_DIR"
+cp "$REPO"/firmware/think65v3-plain/* "$PLAIN_DIR/"
+
 if [ "${1:-}" = "flash" ]; then
     # DFU 模式:按 PCB 背面 reset 键进入
     qmk flash -kb "$KB" -km "$KM"
 else
     qmk compile -kb "$KB" -km "$KM"
+    qmk compile -kb "$KB" -km via_plain
 fi

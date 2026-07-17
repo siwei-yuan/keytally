@@ -235,26 +235,32 @@ fn backup_keymap(app: tauri::State<Arc<App>>) -> Result<String, String> {
 
 #[tauri::command]
 fn restore_stock(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Result<(), String> {
-    let stock = flash::stock_backup_path(app.config_path.parent().unwrap_or(std::path::Path::new(".")));
-    if !stock.exists() {
-        return Err("没有原厂固件存档".into());
-    }
+    let (vid, pid) = {
+        let sh = app.shared.lock().unwrap();
+        (sh.kb.vid, sh.kb.pid)
+    };
+    let (stock, kind) = flash::restore_target(
+        app.config_path.parent().unwrap_or(std::path::Path::new(".")),
+        vid,
+        pid,
+    )
+    .ok_or("没有可用的还原固件")?;
     let app = app.inner().clone();
     std::thread::spawn(move || {
         let emit = |msg: &str| {
             let _ = handle.emit("pro-progress", msg.to_string());
         };
-        emit("① 进入 bootloader…(Pro 固件支持软件跳转)");
+        emit(&format!("① 还原目标:{kind};进入 bootloader…"));
         let _ = app.hid_tx.send(hid::Cmd::BootloaderJump);
         std::thread::sleep(Duration::from_secs(2));
         if let Err(e) = flash::wait_for_dfu(Duration::from_secs(15)) {
             return emit(&format!("❌ {e}"));
         }
-        emit("② 刷回原厂固件…");
+        emit("② 刷入还原固件…");
         if let Err(e) = flash::dfu_flash(&stock) {
             return emit(&format!("❌ {e}"));
         }
-        emit("✅ 已还原原厂固件,键盘将自动重启");
+        emit("✅ 已还原,键盘将自动重启(如为纯净 VIA 固件,键位可在 VIA 里恢复)");
     });
     Ok(())
 }

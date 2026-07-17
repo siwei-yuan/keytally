@@ -71,3 +71,19 @@ pub fn dfu_backup(dest: &PathBuf) -> Result<(), String> {
 pub fn stock_backup_path(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("stock-firmware.bin")
 }
+
+/// 还原目标:优先原厂存档,否则纯净 VIA 固件(功能等同出厂)
+pub fn restore_target(config_dir: &std::path::Path, vid: u16, pid: u16) -> Option<(PathBuf, &'static str)> {
+    let stock = stock_backup_path(config_dir);
+    if stock.exists() {
+        return Some((stock, "原厂固件存档"));
+    }
+    let home = PathBuf::from(std::env::var_os("HOME")?);
+    match (vid, pid) {
+        (0x4753, 0x4003) => {
+            let p = home.join("qmk_firmware/gray_studio_think65v3_via_plain.bin");
+            p.exists().then_some((p, "纯净 VIA 固件(等同出厂功能)"))
+        }
+        _ => None,
+    }
+}
