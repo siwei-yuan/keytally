@@ -195,9 +195,9 @@ fn spawn_collector(handle: tauri::AppHandle, app: Arc<App>) {
                     snap = snapshot::collect(&cfg);
                 } else {
                     snap.claude.active =
-                        activity::is_active(&claude_projects, activity::DEFAULT_THRESHOLD);
+                        activity::claude_active(&claude_projects, &activity::state_dir("claude"));
                     snap.codex.active =
-                        activity::is_active(&codex_sessions, activity::DEFAULT_THRESHOLD);
+                        activity::codex_active(&codex_sessions, &activity::state_dir("codex"));
                 }
                 let changed = {
                     let mut sh = app.shared.lock().unwrap();

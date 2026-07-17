@@ -24,7 +24,7 @@ pub fn collect(cfg: &Config) -> Snapshot {
     if claude_projects.is_dir() {
         claude.valid = true;
         claude.today_tokens = claude_today::scan(&claude_projects, start);
-        claude.active = activity::is_active(&claude_projects, activity::DEFAULT_THRESHOLD);
+        claude.active = activity::claude_active(&claude_projects, &activity::state_dir("claude"));
         if cfg.fetch_claude_quota {
             match claude_quota::get() {
                 Ok(q) => {
@@ -46,7 +46,7 @@ pub fn collect(cfg: &Config) -> Snapshot {
             cx.weekly_pct = l.weekly_pct;
         }
         cx.today_tokens = tokens;
-        cx.active = activity::is_active(&codex_sessions, activity::DEFAULT_THRESHOLD);
+        cx.active = activity::codex_active(&codex_sessions, &activity::state_dir("codex"));
     }
 
     Snapshot { claude, codex: cx }
