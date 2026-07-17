@@ -105,12 +105,23 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
   });
 
-  await listen<FullState>("state", (e) => {
-    state = e.payload;
-    render();
-  });
-
-  state = await invoke<FullState>("get_state");
+  try {
+    await listen<FullState>("state", (e) => {
+      state = e.payload;
+      render();
+    });
+    state = await invoke<FullState>("get_state");
+  } catch {
+    // 非 Tauri 环境(纯浏览器调 UI)→ 演示数据
+    state = {
+      snapshot: {
+        claude: { valid: true, five_hour_pct: 63, weekly_pct: 17, today_tokens: 2_615_737, active: true },
+        codex: { valid: true, five_hour_pct: null, weekly_pct: 1, today_tokens: 0, active: false },
+      },
+      kb: { mode: 0, source: 0, connected: false, device_name: null },
+      config: { claude_daily_budget: 5_000_000, codex_daily_budget: 5_000_000 },
+    };
+  }
   render();
   fillSettings();
 });
