@@ -16,7 +16,7 @@ html, body { height: 100%; }
 ::-webkit-scrollbar { display: none; } /* 展开设置也不出现滚动条 */
 
 body {
-  background: radial-gradient(120% 90% at 50% 0%, #17181d 0%, var(--bg) 60%);
+  background: radial-gradient(120% 90% at 50% 0%, #17181d 0%, var(--bg) 60%) fixed var(--bg);
   color: var(--text);
   font-size: 13px;
   user-select: none;
@@ -80,7 +80,8 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 .stat .v { font-size: 22px; font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
 
 .settings { border-top: 1px solid var(--hairline); padding-top: 12px; color: var(--muted); }
-.settings summary { cursor: pointer; letter-spacing: 3px; font-size: 10px; text-transform: uppercase; list-style: none; }
+.settings summary { cursor: pointer; letter-spacing: 3px; font-size: 10px; text-transform: uppercase; list-style: none; outline: none; }
+.settings summary:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
 .settings summary::before { content: "▸"; color: var(--accent); font-size: 16px; margin-right: 8px; vertical-align: -2px; }
 .settings[open] summary::before { content: "▾"; }
 .settings label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 12px 0; color: var(--text); font-size: 12px; }
