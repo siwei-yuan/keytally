@@ -6,6 +6,7 @@ import {
   computeViaLook,
   renderKeyboard,
   renderUniversal,
+  viaLookToFrame,
   type Snapshot,
   type SourceUsage,
 } from "./keyboard";
@@ -16,6 +17,7 @@ interface KbState {
   connected: boolean;
   device_name: string | null;
   backend: string | null;
+  lighting: string | null;
 }
 
 interface AppConfig {
@@ -49,7 +51,12 @@ function render() {
 
   const dot = $("#conn-dot");
   dot.className = `dot ${kb.connected ? "on" : "off"}`;
-  const backendLabel = kb.backend === "pro" ? "Pro 固件·逐灯" : "VIA 通用·整板同色";
+  const backendLabel =
+    kb.backend === "pro"
+      ? "Pro 固件·逐灯"
+      : kb.lighting === "rgb_matrix"
+        ? "VIA 通用·整板同色"
+        : "VIA 通用·灯带同色";
   $("#conn-text").textContent = kb.connected
     ? `已连接:${kb.device_name ?? "QMK 键盘"}(${backendLabel})`
     : "未连接键盘(预览仍实时)";
@@ -65,8 +72,13 @@ function render() {
   const accent = ACCENTS[kb.source] ?? ACCENTS[0];
   if (kb.backend === "pro") {
     renderKeyboard($("#preview"), computeLeds(snapshot, kb.mode, kb.source, budget), accent);
-  } else {
+  } else if (kb.lighting === "rgb_matrix") {
+    // 逐键 RGB 键盘:整板同色
     renderUniversal($("#preview"), computeViaLook(snapshot, kb.mode, kb.source, budget), accent);
+  } else {
+    // rgblight 灯带/徽章键盘(如 Think6.5 V3):只亮徽章区
+    const look = computeViaLook(snapshot, kb.mode, kb.source, budget);
+    renderKeyboard($("#preview"), viaLookToFrame(look), look.color ?? accent);
   }
 
   const u: SourceUsage = kb.source === 0 ? snapshot.claude : snapshot.codex;
@@ -123,7 +135,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         claude: { valid: true, five_hour_pct: 63, weekly_pct: 17, today_tokens: 2_615_737, active: true },
         codex: { valid: true, five_hour_pct: null, weekly_pct: 1, today_tokens: 0, active: false },
       },
-      kb: { mode: 0, source: 0, connected: false, device_name: null, backend: null },
+      kb: { mode: 0, source: 0, connected: false, device_name: null, backend: null, lighting: null },
       config: { claude_daily_budget: 5_000_000, codex_daily_budget: 5_000_000 },
     };
   }

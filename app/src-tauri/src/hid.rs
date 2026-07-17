@@ -37,7 +37,7 @@ pub enum Cmd {
 }
 
 pub enum Event {
-    Connected { name: Option<String>, backend: &'static str },
+    Connected { name: Option<String>, backend: &'static str, lighting: &'static str },
     Disconnected,
     /// Pro 固件状态回报 (mode, source)
     State(u8, u8),
@@ -210,9 +210,10 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
             if let Some(a) = &api {
                 if let Some((dev, name)) = find_device(a) {
                     if let Some(be) = probe(&dev) {
-                        let backend = match be {
-                            Backend::Pro => "pro",
-                            Backend::Via { .. } => "via",
+                        let (backend, lighting) = match be {
+                            Backend::Pro => ("pro", "per-led"),
+                            Backend::Via { v3: true, channel: 3, .. } => ("via", "rgb_matrix"),
+                            Backend::Via { .. } => ("via", "rgblight"),
                         };
                         if matches!(be, Backend::Pro) {
                             if let Some(f) = &frame {
@@ -222,7 +223,7 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                         taken_over = false;
                         last_applied = None;
                         conn = Some((dev, be));
-                        on_event(Event::Connected { name, backend });
+                        on_event(Event::Connected { name, backend, lighting });
                     }
                 }
             }

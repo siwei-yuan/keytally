@@ -23,7 +23,8 @@ export interface LedFrame {
   // 6 颗灯的颜色;索引 0 = 数据源指示,1-5 = 进度条(与固件 UL_ACCENT_LED/UL_BAR_LEDS 对应)
   leds: string[];
   breathing: boolean; // 活动模式且干活中:整组呼吸
-  blinkAccent: boolean; // 额度模式周限额告警:指示灯闪红
+  blinkAccent: boolean; // 额度模式周限额告警:指示灯闪红(仅 LED 0)
+  blinkAll: boolean; // VIA 通用模式的告警:整组闪红
   passthrough: boolean; // 不接管(活动模式空闲):显示用户自己的灯效
 }
 
@@ -44,28 +45,38 @@ export function computeLeds(snap: Snapshot, mode: number, source: number, budget
   const u = source === 0 ? snap.claude : snap.codex;
   const accent = ACCENTS[source] ?? ACCENTS[0];
 
+  const base = { breathing: false, blinkAccent: false, blinkAll: false, passthrough: false };
   if (!u.valid) {
-    return { leds: [INVALID, OFF, OFF, OFF, OFF, OFF], breathing: false, blinkAccent: false, passthrough: false };
+    return { ...base, leds: [INVALID, OFF, OFF, OFF, OFF, OFF] };
   }
 
   if (mode === 0) {
     const warn = u.weekly_pct !== null && u.weekly_pct >= WEEKLY_WARN_PCT;
-    return {
-      leds: [accent, ...barColors(u.five_hour_pct, gradeColor)],
-      breathing: false,
-      blinkAccent: warn,
-      passthrough: false,
-    };
+    return { ...base, leds: [accent, ...barColors(u.five_hour_pct, gradeColor)], blinkAccent: warn };
   }
   if (mode === 1) {
     const pct = budget > 0 ? Math.min(100, (u.today_tokens * 100) / budget) : null;
-    return { leds: [accent, ...barColors(pct, () => accent)], breathing: false, blinkAccent: false, passthrough: false };
+    return { ...base, leds: [accent, ...barColors(pct, () => accent)] };
   }
   // 活动模式
   if (u.active) {
-    return { leds: Array(6).fill(accent), breathing: true, blinkAccent: false, passthrough: false };
+    return { ...base, leds: Array(6).fill(accent), breathing: true };
   }
-  return { leds: Array(6).fill(OFF), breathing: false, blinkAccent: false, passthrough: true };
+  return { ...base, leds: Array(6).fill(OFF), passthrough: true };
+}
+
+/// VIA 通用模式 + rgblight 键盘:6 颗徽章灯同色
+export function viaLookToFrame(look: ViaLook): LedFrame {
+  if (look.color === null) {
+    return { leds: Array(6).fill(OFF), breathing: false, blinkAccent: false, blinkAll: false, passthrough: true };
+  }
+  return {
+    leds: Array(6).fill(look.color),
+    breathing: look.breathing,
+    blinkAccent: false,
+    blinkAll: look.blinkWarn,
+    passthrough: false,
+  };
 }
 
 // ---- 通用 VIA 模式(整板同色,与 src-tauri compute_via_look 同一套映射) ----
@@ -166,10 +177,10 @@ export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string)
       const cy = BADGE_Y * U + 16 + rowi * 22;
       const cls = [
         frame.breathing ? "breathing" : "",
-        i === 0 && frame.blinkAccent ? "blink-warn" : "",
+        (i === 0 && frame.blinkAccent) || frame.blinkAll ? "blink-warn" : "",
         frame.passthrough ? "passthrough" : "",
       ].join(" ");
-      const glow = color !== OFF && color !== INVALID ? `filter="url(#glow)"` : "";
+      const glow = !frame.passthrough && color !== OFF && color !== INVALID ? `filter="url(#glow)"` : "";
       return `<circle class="${cls}" cx="${cx}" cy="${cy}" r="6" fill="${color}" ${glow}/>`;
     })
     .join("");

@@ -33,6 +33,8 @@ pub struct KbState {
     pub device_name: Option<String>,
     /// "pro" = 本项目固件(逐灯);"via" = 通用 VIA 键盘(整板同色)
     pub backend: Option<String>,
+    /// "rgblight"(灯带/徽章)| "rgb_matrix"(逐键)| "per-led"(Pro 固件)
+    pub lighting: Option<String>,
 }
 
 // 数据源指示色的 QMK HSV(Claude #D97757 / Codex #10A37F)
@@ -299,10 +301,11 @@ pub fn run() {
                     {
                         let mut sh = app.shared.lock().unwrap();
                         match ev {
-                            hid::Event::Connected { name, backend } => {
+                            hid::Event::Connected { name, backend, lighting } => {
                                 sh.kb.connected = true;
                                 sh.kb.device_name = name;
                                 sh.kb.backend = Some(backend.to_string());
+                                sh.kb.lighting = Some(lighting.to_string());
                             }
                             hid::Event::Disconnected => {
                                 sh.kb.connected = false;
