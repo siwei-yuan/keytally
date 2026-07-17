@@ -166,7 +166,7 @@ export function renderUniversal(el: HTMLElement, look: ViaLook, accent: string) 
   el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="--accent:${accent}">${keyRects}</svg>`;
 }
 
-export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string) {
+export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string, zoom = false) {
   const w = 16 * U;
   const h = 5 * U;
 
@@ -174,11 +174,15 @@ export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string)
     const label = k.label
       ? `<text x="${(k.x + k.w / 2) * U}" y="${(k.y + 0.58) * U}" text-anchor="middle">${k.label}</text>`
       : "";
-    return `<g><rect x="${k.x * U + GAP / 2}" y="${k.y * U + GAP / 2}" width="${k.w * U - GAP}" height="${U - GAP}" rx="5" fill="#efeadb"/>${label}</g>`;
+    return `<g><rect x="${k.x * U + GAP / 2}" y="${k.y * U + GAP / 2}" width="${k.w * U - GAP}" height="${U - GAP}" rx="5" fill="#d3cebe"/>${label}</g>`;
   }).join("");
 
-  // 徽章:挡块区 1u × 2u,内嵌 6 颗 LED(2 列 × 3 行)
-  const badge = `<rect x="${BADGE_X * U + GAP / 2}" y="${BADGE_Y * U + GAP / 2}" width="${U - GAP}" height="${2 * U - GAP}" rx="6" fill="#26231d" stroke="#8a8270"/>`;
+  // 徽章:挡块区 1u × 2u —— 高亮的可控灯区
+  const bx = BADGE_X * U + GAP / 2, by = BADGE_Y * U + GAP / 2;
+  const badge = `
+    <rect x="${bx - 5}" y="${by - 5}" width="${U - GAP + 10}" height="${2 * U - GAP + 10}" rx="9" fill="none" stroke="${accent}" stroke-width="2.5" stroke-dasharray="6 4" opacity="0.95"/>
+    <rect x="${bx}" y="${by}" width="${U - GAP}" height="${2 * U - GAP}" rx="6" fill="#1c1a15" stroke="#8a8270"/>
+    <text x="${bx + (U - GAP) / 2}" y="${by - 12}" text-anchor="middle" style="fill:${accent};font-weight:700;letter-spacing:2px">LED</text>`;
   const leds = frame.leds
     .map((color, i) => {
       const col = i % 2;
@@ -191,11 +195,11 @@ export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string)
         frame.passthrough ? "passthrough" : "",
       ].join(" ");
       const glow = !frame.passthrough && color !== OFF && color !== INVALID ? `filter="url(#glow)"` : "";
-      return `<circle class="${cls}" cx="${cx}" cy="${cy}" r="6" fill="${color}" ${glow}/>`;
+      return `<g class="${cls}"><circle cx="${cx}" cy="${cy}" r="7.5" fill="#0c0b08"/><circle cx="${cx}" cy="${cy}" r="6" fill="${color}" ${glow}/><ellipse cx="${cx - 2}" cy="${cy - 2.2}" rx="2.2" ry="1.6" fill="#ffffff55"/></g>`;
     })
     .join("");
 
-  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="--accent:${accent}">
+  el.innerHTML = `<svg class="${zoom ? "zoomed" : ""}" viewBox="0 0 ${w} ${h}" style="--accent:${accent}">
     <defs><filter id="glow"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
     ${keyRects}${badge}${leds}
   </svg>`;

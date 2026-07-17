@@ -81,7 +81,7 @@ function render() {
   const budget = kb.source === 0 ? config.claude_daily_budget : config.codex_daily_budget;
   const accent = ACCENTS[kb.source] ?? ACCENTS[0];
   if (kb.backend === "pro") {
-    renderKeyboard($("#preview"), computeLeds(snapshot, kb.mode, kb.source, budget), accent);
+    renderKeyboard($("#preview"), computeLeds(snapshot, kb.mode, kb.source, budget), accent, kb.mode !== 2);
   } else if (kb.lighting === "rgb_matrix") {
     // 逐键 RGB 键盘:整板同色
     renderUniversal($("#preview"), computeViaLook(snapshot, kb.mode, kb.source, budget), accent);
@@ -91,7 +91,7 @@ function render() {
     const look = computeViaLook(snapshot, kb.mode, kb.source, budget);
     if (!kb.connected || key === "4753:4003") {
       // Think6.5 V3(或未连接时的默认视图):右侧徽章 6 灯
-      renderKeyboard($("#preview"), viaLookToFrame(look), look.color ?? accent);
+      renderKeyboard($("#preview"), viaLookToFrame(look), look.color ?? accent, kb.mode !== 2);
     } else {
       // 其他 rgblight 键盘:按数据库的灯数画通用灯带
       const n = dev?.rl || 6;
