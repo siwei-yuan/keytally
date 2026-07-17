@@ -49,7 +49,7 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
   padding: 10px; box-shadow: inset 0 0 0 1px #ffffff88, 2px 2px 0 #00000033;
 }
 #preview { overflow: hidden; }
-#preview svg { width: 100%; height: auto; display: block; transition: transform 0.65s cubic-bezier(0.2, 0.8, 0.2, 1); transform-origin: 92% 55%; }
+#preview svg { width: 100%; height: auto; display: block; transition: transform 0.65s cubic-bezier(0.2, 0.8, 0.2, 1); transform-origin: 100% 55%; }
 #preview svg.zoomed { transform: scale(1.9); }
 .legend { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); font-size: 11px; }
 .legend .chip { display: inline-block; width: 22px; height: 10px; border: 1px solid var(--panel-deep); border-radius: 2px; vertical-align: middle; margin-right: 5px; }
