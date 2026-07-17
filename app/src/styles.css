@@ -59,12 +59,31 @@ header {
   font-family: inherit;
   pointer-events: none;
 }
-#preview svg.breathing rect {
+#preview circle.breathing {
   animation: breathe 2.2s ease-in-out infinite;
+}
+#preview circle.blink-warn {
+  animation: blink-warn 1s step-end infinite;
+}
+#preview circle.passthrough {
+  animation: hue-cycle 6s linear infinite;
 }
 @keyframes breathe {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
+}
+@keyframes blink-warn {
+  0%, 100% { fill: var(--accent); }
+  50% { fill: #e03131; }
+}
+/* 活动模式空闲 = 不接管,示意用户自己的灯效 */
+@keyframes hue-cycle {
+  0% { fill: #d96d6d; }
+  20% { fill: #d9c86d; }
+  40% { fill: #7dd96d; }
+  60% { fill: #6dd0d9; }
+  80% { fill: #8a6dd9; }
+  100% { fill: #d96d6d; }
 }
 
 .controls {

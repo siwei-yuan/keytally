@@ -1,13 +1,5 @@
-// 键盘灯组预览:布局定义 + 颜色映射 + SVG 渲染。
-// 颜色映射必须与固件 rgb_matrix 渲染逻辑保持一致(固件是 C 的等价实现)。
-
-export interface Key {
-  x: number; // 单位 u
-  y: number;
-  w: number;
-  label?: string;
-  role?: "bar1" | "bar2" | "accent";
-}
+// Think6.5 V3 灯组预览:6 颗 WS2812(右侧挡块徽章区),键帽无 RGB。
+// LED 映射逻辑与 firmware/common/usage_lights.c 保持一致。
 
 export interface SourceUsage {
   valid: boolean;
@@ -22,114 +14,123 @@ export interface Snapshot {
   codex: SourceUsage;
 }
 
-// 占位布局:通用 60% ANSI。键盘型号确认后换成按 QMK info.json 生成的真实布局。
-// bar1 = 数字排(主进度条),bar2 = QWERTY 排(额度模式的周限额条),accent = Esc。
-export const GENERIC_60: Key[] = (() => {
-  const keys: Key[] = [];
-  const row = (y: number, widths: [string, number][], roles?: Key["role"]) => {
-    let x = 0;
-    for (const [label, w] of widths) {
-      keys.push({ x, y, w, label, role: roles });
-      x += w;
-    }
-  };
-  keys.push({ x: 0, y: 0, w: 1, label: "Esc", role: "accent" });
-  let x = 1;
-  for (const label of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "="]) {
-    keys.push({ x, y: 0, w: 1, label, role: "bar1" });
-    x += 1;
-  }
-  keys.push({ x, y: 0, w: 2, label: "Bksp" });
-  keys.push({ x: 0, y: 1, w: 1.5, label: "Tab" });
-  x = 1.5;
-  for (const label of ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"]) {
-    keys.push({ x, y: 1, w: 1, label, role: "bar2" });
-    x += 1;
-  }
-  keys.push({ x, y: 1, w: 1, label: "[" });
-  keys.push({ x: x + 1, y: 1, w: 1, label: "]" });
-  keys.push({ x: x + 2, y: 1, w: 1.5, label: "\\" });
-  row(2, [["Caps", 1.75], ["A", 1], ["S", 1], ["D", 1], ["F", 1], ["G", 1], ["H", 1], ["J", 1], ["K", 1], ["L", 1], [";", 1], ["'", 1], ["Enter", 2.25]]);
-  row(3, [["Shift", 2.25], ["Z", 1], ["X", 1], ["C", 1], ["V", 1], ["B", 1], ["N", 1], ["M", 1], [",", 1], [".", 1], ["/", 1], ["Shift", 2.75]]);
-  row(4, [["Ctrl", 1.25], ["Opt", 1.25], ["Cmd", 1.25], ["Space", 6.25], ["Cmd", 1.25], ["Opt", 1.25], ["Fn", 1.25], ["Ctrl", 1.25]]);
-  return keys;
-})();
-
-const BASE = "#23262d"; // 熄灭
-const INVALID = "#3a3f48";
 export const ACCENTS = ["#D97757", "#10A37F"]; // Claude 珊瑚橙 / Codex 青
+const OFF = "#23262d";
+const INVALID = "#3a3f48";
+const WEEKLY_WARN_PCT = 80;
 
-// 0–100 → 绿→黄→红
+export interface LedFrame {
+  // 6 颗灯的颜色;索引 0 = 数据源指示,1-5 = 进度条(与固件 UL_ACCENT_LED/UL_BAR_LEDS 对应)
+  leds: string[];
+  breathing: boolean; // 活动模式且干活中:整组呼吸
+  blinkAccent: boolean; // 额度模式周限额告警:指示灯闪红
+  passthrough: boolean; // 不接管(活动模式空闲):显示用户自己的灯效
+}
+
 function gradeColor(pct: number): string {
   const hue = 120 * (1 - Math.min(pct, 100) / 100);
   return `hsl(${hue.toFixed(0)}, 72%, 46%)`;
 }
 
-function fillBar(colors: Map<Key, string>, keys: Key[], role: string, pct: number | null) {
-  const bar = keys.filter((k) => k.role === role);
-  if (pct === null) return;
-  const lit = Math.round((Math.min(pct, 100) / 100) * bar.length);
-  const c = gradeColor(pct);
-  bar.slice(0, lit).forEach((k) => colors.set(k, c));
+function barColors(pct: number | null, color: (p: number) => string): string[] {
+  if (pct === null) return Array(5).fill(OFF);
+  const clamped = Math.min(pct, 100);
+  let lit = Math.round((clamped * 5) / 100);
+  if (clamped > 0 && lit === 0) lit = 1; // 有消耗就至少亮一格(同固件)
+  return Array.from({ length: 5 }, (_, i) => (i < lit ? color(clamped) : OFF));
 }
 
-export interface Rendered {
-  colors: Map<Key, string>;
-  breathing: boolean; // 活动模式且正在干活 → 整板呼吸
-  breathColor: string;
-}
-
-export function computeColors(
-  keys: Key[],
-  snap: Snapshot,
-  mode: number,
-  source: number,
-  budget: number
-): Rendered {
-  const usage = source === 0 ? snap.claude : snap.codex;
+export function computeLeds(snap: Snapshot, mode: number, source: number, budget: number): LedFrame {
+  const u = source === 0 ? snap.claude : snap.codex;
   const accent = ACCENTS[source] ?? ACCENTS[0];
-  const colors = new Map<Key, string>();
-  keys.forEach((k) => colors.set(k, BASE));
-  const accentKey = keys.find((k) => k.role === "accent");
 
-  if (!usage.valid) {
-    if (accentKey) colors.set(accentKey, INVALID);
-    return { colors, breathing: false, breathColor: accent };
+  if (!u.valid) {
+    return { leds: [INVALID, OFF, OFF, OFF, OFF, OFF], breathing: false, blinkAccent: false, passthrough: false };
   }
-  if (accentKey) colors.set(accentKey, accent);
 
-  let breathing = false;
   if (mode === 0) {
-    fillBar(colors, keys, "bar1", usage.five_hour_pct);
-    fillBar(colors, keys, "bar2", usage.weekly_pct);
-  } else if (mode === 1) {
-    const pct = budget > 0 ? Math.min(100, (usage.today_tokens * 100) / budget) : null;
-    fillBar(colors, keys, "bar1", pct);
-  } else if (mode === 2) {
-    breathing = usage.active;
-    if (usage.active) {
-      keys.forEach((k) => colors.set(k, accent));
-    }
+    const warn = u.weekly_pct !== null && u.weekly_pct >= WEEKLY_WARN_PCT;
+    return {
+      leds: [accent, ...barColors(u.five_hour_pct, gradeColor)],
+      breathing: false,
+      blinkAccent: warn,
+      passthrough: false,
+    };
   }
-  return { colors, breathing, breathColor: accent };
+  if (mode === 1) {
+    const pct = budget > 0 ? Math.min(100, (u.today_tokens * 100) / budget) : null;
+    return { leds: [accent, ...barColors(pct, () => accent)], breathing: false, blinkAccent: false, passthrough: false };
+  }
+  // 活动模式
+  if (u.active) {
+    return { leds: Array(6).fill(accent), breathing: true, blinkAccent: false, passthrough: false };
+  }
+  return { leds: Array(6).fill(OFF), breathing: false, blinkAccent: false, passthrough: true };
 }
 
-const U = 44;
-const GAP = 4;
+// ---- 绘制 ----
 
-export function renderKeyboard(el: HTMLElement, keys: Key[], r: Rendered) {
-  const maxX = Math.max(...keys.map((k) => k.x + k.w));
-  const maxY = Math.max(...keys.map((k) => k.y)) + 1;
-  const w = maxX * U;
-  const h = maxY * U;
-  const rects = keys
-    .map((k) => {
-      const color = r.colors.get(k) ?? BASE;
-      const label = k.label
-        ? `<text x="${(k.x + k.w / 2) * U}" y="${(k.y + 0.58) * U}" text-anchor="middle">${k.label}</text>`
-        : "";
-      return `<g><rect x="${k.x * U + GAP / 2}" y="${k.y * U + GAP / 2}" width="${k.w * U - GAP}" height="${U - GAP}" rx="6" fill="${color}"/>${label}</g>`;
+interface Key {
+  x: number;
+  y: number;
+  w: number;
+  label?: string;
+}
+
+// 65% ANSI blocker(Think6.5 V3),仅作轮廓展示,键帽无光
+const KEYS: Key[] = (() => {
+  const keys: Key[] = [];
+  const row = (y: number, defs: [string, number][]) => {
+    let x = 0;
+    for (const [label, w] of defs) {
+      keys.push({ x, y, w, label });
+      x += w;
+    }
+  };
+  row(0, [["Esc", 1], ["1", 1], ["2", 1], ["3", 1], ["4", 1], ["5", 1], ["6", 1], ["7", 1], ["8", 1], ["9", 1], ["0", 1], ["-", 1], ["=", 1], ["Bksp", 2], ["Del", 1]]);
+  row(1, [["Tab", 1.5], ["Q", 1], ["W", 1], ["E", 1], ["R", 1], ["T", 1], ["Y", 1], ["U", 1], ["I", 1], ["O", 1], ["P", 1], ["[", 1], ["]", 1], ["\\", 1.5], ["Home", 1]]);
+  row(2, [["Caps", 1.75], ["A", 1], ["S", 1], ["D", 1], ["F", 1], ["G", 1], ["H", 1], ["J", 1], ["K", 1], ["L", 1], [";", 1], ["'", 1], ["Enter", 2.25]]);
+  row(3, [["Shift", 2.25], ["Z", 1], ["X", 1], ["C", 1], ["V", 1], ["B", 1], ["N", 1], ["M", 1], [",", 1], [".", 1], ["/", 1], ["Shift", 1.75], ["↑", 1]]);
+  row(4, [["Ctrl", 1.25], ["Opt", 1.25], ["Cmd", 1.25], ["Space", 6.25], ["Cmd", 1], ["Fn", 1], ["←", 1], ["↓", 1], ["→", 1]]);
+  return keys;
+})();
+
+const U = 40;
+const GAP = 4;
+const BADGE_X = 15; // 右侧挡块(徽章)位置
+const BADGE_Y = 2;
+
+export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string) {
+  const w = 16 * U;
+  const h = 5 * U;
+
+  const keyRects = KEYS.map((k) => {
+    const label = k.label
+      ? `<text x="${(k.x + k.w / 2) * U}" y="${(k.y + 0.58) * U}" text-anchor="middle">${k.label}</text>`
+      : "";
+    return `<g><rect x="${k.x * U + GAP / 2}" y="${k.y * U + GAP / 2}" width="${k.w * U - GAP}" height="${U - GAP}" rx="5" fill="#1d2026"/>${label}</g>`;
+  }).join("");
+
+  // 徽章:挡块区 1u × 2u,内嵌 6 颗 LED(2 列 × 3 行)
+  const badge = `<rect x="${BADGE_X * U + GAP / 2}" y="${BADGE_Y * U + GAP / 2}" width="${U - GAP}" height="${2 * U - GAP}" rx="6" fill="#14161a" stroke="#2b2f37"/>`;
+  const leds = frame.leds
+    .map((color, i) => {
+      const col = i % 2;
+      const rowi = Math.floor(i / 2);
+      const cx = BADGE_X * U + U / 2 + (col - 0.5) * 14;
+      const cy = BADGE_Y * U + 16 + rowi * 22;
+      const cls = [
+        frame.breathing ? "breathing" : "",
+        i === 0 && frame.blinkAccent ? "blink-warn" : "",
+        frame.passthrough ? "passthrough" : "",
+      ].join(" ");
+      const glow = color !== OFF && color !== INVALID ? `filter="url(#glow)"` : "";
+      return `<circle class="${cls}" cx="${cx}" cy="${cy}" r="6" fill="${color}" ${glow}/>`;
     })
     .join("");
-  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" class="${r.breathing ? "breathing" : ""}" style="--breath-color:${r.breathColor}">${rects}</svg>`;
+
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="--accent:${accent}">
+    <defs><filter id="glow"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+    ${keyRects}${badge}${leds}
+  </svg>`;
 }

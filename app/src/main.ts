@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
-  computeColors,
-  GENERIC_60,
+  ACCENTS,
+  computeLeds,
   renderKeyboard,
   type Snapshot,
   type SourceUsage,
@@ -60,8 +60,8 @@ function render() {
   const budget = kb.source === 0 ? config.claude_daily_budget : config.codex_daily_budget;
   renderKeyboard(
     $("#preview"),
-    GENERIC_60,
-    computeColors(GENERIC_60, snapshot, kb.mode, kb.source, budget)
+    computeLeds(snapshot, kb.mode, kb.source, budget),
+    ACCENTS[kb.source] ?? ACCENTS[0]
   );
 
   const u: SourceUsage = kb.source === 0 ? snapshot.claude : snapshot.codex;

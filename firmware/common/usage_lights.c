@@ -1,16 +1,18 @@
 #include "usage_lights.h"
 #include "usage_lights_config.h"
 #include "raw_hid.h"
+#include "rgblight.h"
 
 ul_state_t ul_state = {
     .mode   = UL_MODE_QUOTA,
     .source = UL_SRC_CLAUDE,
 };
 
-static const uint8_t bar1_leds[] = UL_BAR1_LEDS;
-static const uint8_t bar2_leds[] = UL_BAR2_LEDS;
-#define BAR1_LEN ARRAY_SIZE(bar1_leds)
-#define BAR2_LEN ARRAY_SIZE(bar2_leds)
+static const uint8_t bar_leds[] = UL_BAR_LEDS;
+#define BAR_LEN ARRAY_SIZE(bar_leds)
+
+// 是否正在接管灯效(接管期间切到 static 模式;释放时从 EEPROM 恢复用户设置)
+static bool override_active = false;
 
 // 数据源指示色:Claude 珊瑚橙 / Codex 青(与 app 预览一致)
 static const uint8_t accent_rgb[UL_SRC_COUNT][3] = {
@@ -97,76 +99,113 @@ bool process_record_usage_lights(uint16_t keycode, keyrecord_t *record) {
 
 // ---- 渲染 ----
 
-static bool ul_data_fresh(void) {
-    return ul_state.last_packet_time != 0 && timer_elapsed32(ul_state.last_packet_time) < UL_TIMEOUT_MS;
+static void take_over(void) {
+    if (!override_active) {
+        override_active = true;
+        rgblight_mode_noeeprom(RGBLIGHT_MODE_STATIC_LIGHT);
+    }
 }
 
-// 0-100 → 绿(hue 85)→红(hue 0),与 app 预览的 HSL 渐变对应
-static void bar_color(uint8_t pct, uint8_t *r, uint8_t *g, uint8_t *b) {
-    hsv_t hsv = {.h = (uint8_t)((uint16_t)85 * (100 - pct) / 100), .s = 255, .v = rgb_matrix_get_val()};
-    rgb_t rgb = hsv_to_rgb(hsv);
-    *r        = rgb.r;
-    *g        = rgb.g;
-    *b        = rgb.b;
+static void release(void) {
+    if (override_active) {
+        override_active = false;
+        rgblight_reload_from_eeprom(); // 恢复用户自己的灯效设置
+    }
 }
 
-static void render_bar(const uint8_t *leds, uint8_t len, uint8_t pct, uint8_t led_min, uint8_t led_max) {
-    if (pct == UL_UNKNOWN || len == 0) return;
+// 0-100 → 绿(hue 85)→红(hue 0)
+static rgb_t grade_color(uint8_t pct, uint8_t val) {
+    hsv_t hsv = {.h = (uint8_t)((uint16_t)85 * (100 - pct) / 100), .s = 255, .v = val};
+    return hsv_to_rgb(hsv);
+}
+
+static void set_led(uint8_t idx, uint8_t r, uint8_t g, uint8_t b) {
+    rgblight_setrgb_at(r, g, b, idx);
+}
+
+// pct 灌进 BAR_LEN 段进度条;gradient=true 用绿→红,否则用 color 填充
+static void render_bar(uint8_t pct, bool gradient, const uint8_t *color, uint8_t val) {
+    if (pct == UL_UNKNOWN) {
+        for (uint8_t i = 0; i < BAR_LEN; i++) set_led(bar_leds[i], 0, 0, 0);
+        return;
+    }
     if (pct > 100) pct = 100;
-    uint8_t lit = (uint8_t)(((uint16_t)pct * len + 50) / 100);
-    uint8_t r, g, b;
-    bar_color(pct, &r, &g, &b);
-    for (uint8_t i = 0; i < len; i++) {
-        uint8_t led = leds[i];
-        if (led < led_min || led >= led_max) continue;
+    uint8_t lit = (uint8_t)(((uint16_t)pct * BAR_LEN + 50) / 100);
+    if (pct > 0 && lit == 0) lit = 1; // 有消耗就至少亮一格
+    rgb_t   gc  = grade_color(pct, val);
+    for (uint8_t i = 0; i < BAR_LEN; i++) {
         if (i < lit) {
-            rgb_matrix_set_color(led, r, g, b);
+            if (gradient) {
+                set_led(bar_leds[i], gc.r, gc.g, gc.b);
+            } else {
+                set_led(bar_leds[i], (uint16_t)color[0] * val / 255, (uint16_t)color[1] * val / 255,
+                        (uint16_t)color[2] * val / 255);
+            }
         } else {
-            rgb_matrix_set_color(led, 0, 0, 0);
+            set_led(bar_leds[i], 0, 0, 0);
         }
     }
 }
 
-bool ul_render(uint8_t led_min, uint8_t led_max) {
-    if (!ul_data_fresh()) return false; // app 离线:完全不干预,恢复正常灯效
+// 2.2s 三角波呼吸系数 (115-255)
+static uint8_t breathe_scale(void) {
+    uint16_t t     = timer_read32() % 2200;
+    uint16_t phase = t < 1100 ? t : 2200 - t;
+    return 115 + (uint8_t)((uint32_t)phase * 140 / 1100);
+}
+
+void ul_task(void) {
+    static uint32_t last_render = 0;
+    if (timer_elapsed32(last_render) < 50) return; // ~20fps 足够
+    last_render = timer_read32();
+
+    bool fresh = ul_state.last_packet_time != 0 && timer_elapsed32(ul_state.last_packet_time) < UL_TIMEOUT_MS;
+    if (!fresh) {
+        release(); // app 离线:恢复用户灯效
+        return;
+    }
 
     const ul_source_data_t *d      = &ul_state.data[ul_state.source];
     const uint8_t          *accent = accent_rgb[ul_state.source];
-    uint8_t                 val    = rgb_matrix_get_val();
+    uint8_t                 val    = rgblight_get_val();
 
     if (!d->valid) {
-        if (UL_ACCENT_LED >= led_min && UL_ACCENT_LED < led_max) {
-            rgb_matrix_set_color(UL_ACCENT_LED, 40, 40, 40);
-        }
-        return false;
+        take_over();
+        set_led(UL_ACCENT_LED, 30, 30, 30);
+        for (uint8_t i = 0; i < BAR_LEN; i++) set_led(bar_leds[i], 0, 0, 0);
+        return;
     }
+
+    uint8_t ar = (uint16_t)accent[0] * val / 255;
+    uint8_t ag = (uint16_t)accent[1] * val / 255;
+    uint8_t ab = (uint16_t)accent[2] * val / 255;
 
     switch (ul_state.mode) {
         case UL_MODE_QUOTA:
-            render_bar(bar1_leds, BAR1_LEN, d->five_hour_pct, led_min, led_max);
-            render_bar(bar2_leds, BAR2_LEN, d->weekly_pct, led_min, led_max);
+            take_over();
+            render_bar(d->five_hour_pct, true, NULL, val);
+            // 周限额告警:指示灯在源色和红色之间 1Hz 交替
+            if (d->weekly_pct != UL_UNKNOWN && d->weekly_pct >= UL_WEEKLY_WARN_PCT && (timer_read32() % 1000) < 500) {
+                set_led(UL_ACCENT_LED, val, 0, 0);
+            } else {
+                set_led(UL_ACCENT_LED, ar, ag, ab);
+            }
             break;
         case UL_MODE_TODAY:
-            render_bar(bar1_leds, BAR1_LEN, d->today_pct, led_min, led_max);
+            take_over();
+            render_bar(d->today_pct, false, accent, val);
+            set_led(UL_ACCENT_LED, ar, ag, ab);
             break;
         case UL_MODE_ACTIVITY:
             if (d->active) {
-                // 整板呼吸:2.2s 三角波,亮度跟随用户的 RGB 亮度设置
-                uint16_t t     = timer_read32() % 2200;
-                uint16_t phase = t < 1100 ? t : 2200 - t;
-                uint8_t  scale = 115 + (uint8_t)((uint32_t)phase * 140 / 1100); // 45%-100%
-                for (uint8_t led = led_min; led < led_max; led++) {
-                    rgb_matrix_set_color(led, (uint16_t)accent[0] * val / 255 * scale / 255,
-                                         (uint16_t)accent[1] * val / 255 * scale / 255,
-                                         (uint16_t)accent[2] * val / 255 * scale / 255);
+                take_over();
+                uint8_t s = breathe_scale();
+                for (uint8_t i = 0; i < RGBLIGHT_LED_COUNT; i++) {
+                    set_led(i, (uint16_t)ar * s / 255, (uint16_t)ag * s / 255, (uint16_t)ab * s / 255);
                 }
+            } else {
+                release(); // 空闲:完全不干预
             }
             break;
     }
-
-    if (UL_ACCENT_LED >= led_min && UL_ACCENT_LED < led_max) {
-        rgb_matrix_set_color(UL_ACCENT_LED, (uint16_t)accent[0] * val / 255, (uint16_t)accent[1] * val / 255,
-                             (uint16_t)accent[2] * val / 255);
-    }
-    return false;
 }
