@@ -42,3 +42,12 @@ VIA 里用 Any 键填 `QK_KB_0`/`QK_KB_1` 可重绑)。
 - VIA 改键照常可用;本协议命令区间 0xC0–0xCF 在 `via_command_kb()` 截获。
 - 上游 kb 级代码的 Caps Lock 白灯层(rgblight layer)优先级更高,开大写时 6 灯变白,
   属预期行为。
+
+## 社区适配新键盘(开源后)
+
+1. 复制 `think65v3/` 为你的板子目录,按板改 `usage_lights_config.h`(LED 索引)
+   和 keymap;`./build.sh` 编译出 .bin。
+2. app 侧在 `app/src-tauri/src/flash.rs` 的注册表加一行 VID/PID → bin 路径,
+   `app/src/main.ts` 的 `PRO_BOARDS` 加同一 VID/PID。
+3. 插上键盘 → 设置里「升级到 Pro」即可一键刷入(自动备份/恢复 VIA 键位,
+   bootloader 走 VIA 0x0B 软件跳转,无需拆壳)。

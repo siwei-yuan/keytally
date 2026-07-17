@@ -133,6 +133,29 @@ function render() {
     <div class="stat"><span class="k">状态</span><span class="v">${u.valid ? (u.active ? "🔥干活中" : "空闲") : "未安装"}</span></div>`;
 }
 
+const PRO_BOARDS = new Set(["4753:4003"]); // 已适配 Pro 固件的板子(开源后社区扩充)
+
+function renderPro() {
+  if (!state) return;
+  const { kb } = state;
+  const key = `${kb.vid.toString(16).padStart(4, "0")}:${kb.pid.toString(16).padStart(4, "0")}`;
+  const statusEl = $("#pro-status");
+  const btn = $<HTMLButtonElement>("#upgrade-pro");
+  if (!kb.connected) {
+    statusEl.textContent = "键盘未连接";
+    btn.disabled = true;
+  } else if (kb.backend === "pro") {
+    statusEl.textContent = "✅ 已运行 Pro 固件";
+    btn.disabled = true;
+  } else if (PRO_BOARDS.has(key)) {
+    statusEl.textContent = "可升级(已有本板固件)";
+    btn.disabled = false;
+  } else {
+    statusEl.textContent = "该键盘暂无 Pro 固件,欢迎适配";
+    btn.disabled = true;
+  }
+}
+
 function fillSettings() {
   if (!state) return;
   $<HTMLInputElement>("#claude-budget").value = String(state.config.claude_daily_budget);
@@ -177,8 +200,12 @@ window.addEventListener("DOMContentLoaded", async () => {
     await listen<FullState>("state", (e) => {
       state = e.payload;
       render();
+      renderPro();
     });
     state = await invoke<FullState>("get_state");
+    await listen<string>("pro-progress", (e) => {
+      $("#pro-progress").textContent = e.payload;
+    });
   } catch {
     // 非 Tauri 环境(纯浏览器调 UI)→ 演示数据
     state = {
@@ -191,5 +218,27 @@ window.addEventListener("DOMContentLoaded", async () => {
     };
   }
   render();
+  renderPro();
   fillSettings();
+
+  $("#backup-keymap").addEventListener("click", async () => {
+    try {
+      const path = await invoke<string>("backup_keymap");
+      $("#pro-progress").textContent = `键位已备份到 ${path}`;
+    } catch (e) {
+      $("#pro-progress").textContent = `备份失败:${e}`;
+    }
+  });
+
+  $("#upgrade-pro").addEventListener("click", async () => {
+    const yes = confirm(
+      "将刷入 Pro 固件(自动备份并恢复 VIA 键位)。\n过程约 1 分钟,期间键盘会短暂失灵,勿拔线。\n继续?"
+    );
+    if (!yes) return;
+    try {
+      await invoke("upgrade_to_pro");
+    } catch (e) {
+      $("#pro-progress").textContent = `❌ ${e}`;
+    }
+  });
 });

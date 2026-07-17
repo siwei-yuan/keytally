@@ -32,8 +32,46 @@ pub enum Cmd {
     Frame(Frame),
     /// 仅 Pro 后端有键盘侧状态;VIA 后端忽略
     SetState { mode: Option<u8>, source: Option<u8> },
+    /// VIA 动态键位表整块读取(层数×5行×16列×2字节,think65v3)
+    DumpKeymap(std::sync::mpsc::Sender<Result<Vec<u8>, String>>),
+    /// 写回键位表
+    RestoreKeymap(Vec<u8>, std::sync::mpsc::Sender<Result<(), String>>),
+    /// VIA 0x0B:跳进 bootloader(DFU),设备会立即断开
+    BootloaderJump,
     /// 恢复灯效并结束线程(app 退出前调用)
     Shutdown,
+}
+
+const KM_ROWS: usize = 5;
+const KM_COLS: usize = 16;
+
+fn via_dump_keymap(dev: &hidapi::HidDevice) -> Result<Vec<u8>, String> {
+    let layers = handled(xfer(dev, &[0x11], 1)).ok_or("layer count query failed")?[1] as usize;
+    let total = layers * KM_ROWS * KM_COLS * 2;
+    let mut buf = Vec::with_capacity(total);
+    let mut off = 0usize;
+    while off < total {
+        let size = 28.min(total - off) as u8;
+        let req = [0x12, (off >> 8) as u8, off as u8, size];
+        let resp = handled(xfer(dev, &req, 4)).ok_or_else(|| format!("read @{off} failed"))?;
+        buf.extend_from_slice(&resp[4..4 + size as usize]);
+        off += size as usize;
+    }
+    Ok(buf)
+}
+
+fn via_restore_keymap(dev: &hidapi::HidDevice, data: &[u8]) -> Result<(), String> {
+    let mut off = 0usize;
+    while off < data.len() {
+        let size = 28.min(data.len() - off);
+        let mut req = vec![0x13, (off >> 8) as u8, off as u8, size as u8];
+        req.extend_from_slice(&data[off..off + size]);
+        if handled(xfer(dev, &req, 4)).is_none() {
+            return Err(format!("write @{off} failed"));
+        }
+        off += size;
+    }
+    Ok(())
 }
 
 pub enum Event {
@@ -251,6 +289,26 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                             drop_dev = true;
                         }
                     }
+                }
+                Cmd::DumpKeymap(reply) => {
+                    let r = match &conn {
+                        Some((dev, _)) => via_dump_keymap(dev),
+                        None => Err("keyboard not connected".into()),
+                    };
+                    let _ = reply.send(r);
+                }
+                Cmd::RestoreKeymap(data, reply) => {
+                    let r = match &conn {
+                        Some((dev, _)) => via_restore_keymap(dev, &data),
+                        None => Err("keyboard not connected".into()),
+                    };
+                    let _ = reply.send(r);
+                }
+                Cmd::BootloaderJump => {
+                    if let Some((dev, _)) = &conn {
+                        let _ = write_packet(dev, &[0x0B]);
+                    }
+                    drop_dev = true; // 设备即将消失
                 }
                 Cmd::Shutdown => shutdown = true,
             }

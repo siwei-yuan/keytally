@@ -73,6 +73,16 @@
         <label>Claude 活动时灯亮这个颜色 <input id="claude-color" type="color" /></label>
         <label>Codex 活动时灯亮这个颜色 <input id="codex-color" type="color" /></label>
         <button id="save-config">保存</button>
+
+        <div class="pro">
+          <span class="sec-label">PRO 固件(逐灯进度条 / 键盘按键切换 / 断线自愈)</span>
+          <div class="pro-row">
+            <span id="pro-status">检测中…</span>
+            <button id="backup-keymap">备份键位</button>
+            <button id="upgrade-pro" disabled>升级到 Pro</button>
+          </div>
+          <div id="pro-progress"></div>
+        </div>
       </details>
     </main>
   </body>

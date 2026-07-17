@@ -1,3 +1,4 @@
+mod flash;
 mod hid;
 
 use collector::types::{Config as CollectorConfig, Snapshot};
@@ -165,6 +166,101 @@ impl App {
 #[tauri::command]
 fn get_state(app: tauri::State<Arc<App>>) -> FullState {
     app.full_state()
+}
+
+fn dump_keymap_blocking(app: &App) -> Result<Vec<u8>, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.hid_tx.send(hid::Cmd::DumpKeymap(tx)).map_err(|e| e.to_string())?;
+    rx.recv_timeout(Duration::from_secs(10)).map_err(|e| e.to_string())?
+}
+
+fn backup_path(app: &App) -> PathBuf {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    app.config_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join(format!("keymap-backup-{ts}.bin"))
+}
+
+#[tauri::command]
+fn backup_keymap(app: tauri::State<Arc<App>>) -> Result<String, String> {
+    let data = dump_keymap_blocking(&app)?;
+    let path = backup_path(&app);
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    std::fs::write(&path, &data).map_err(|e| e.to_string())?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Result<(), String> {
+    let (vid, pid) = {
+        let sh = app.shared.lock().unwrap();
+        if !sh.kb.connected {
+            return Err("键盘未连接".into());
+        }
+        (sh.kb.vid, sh.kb.pid)
+    };
+    let bin = flash::pro_firmware_bin(vid, pid).ok_or("该键盘暂无 Pro 固件(欢迎社区适配)")?;
+    let app = app.inner().clone();
+    std::thread::spawn(move || {
+        let emit = |msg: &str| {
+            let _ = handle.emit("pro-progress", msg.to_string());
+        };
+        let fail = |msg: String| {
+            let _ = handle.emit("pro-progress", format!("❌ {msg}"));
+        };
+        emit("① 备份键位…");
+        let backup = match dump_keymap_blocking(&app) {
+            Ok(d) => {
+                let p = backup_path(&app);
+                let _ = p.parent().map(std::fs::create_dir_all);
+                if std::fs::write(&p, &d).is_err() {
+                    return fail("键位备份写盘失败,中止".into());
+                }
+                d
+            }
+            Err(e) => return fail(format!("键位备份失败,中止:{e}")),
+        };
+        emit("② 进入 bootloader…");
+        let _ = app.hid_tx.send(hid::Cmd::BootloaderJump);
+        std::thread::sleep(Duration::from_secs(2));
+        emit("③ 等待 DFU 设备…");
+        if let Err(e) = flash::wait_for_dfu(Duration::from_secs(30)) {
+            return fail(e);
+        }
+        emit("④ 刷入 Pro 固件…(约 10 秒,勿拔线)");
+        if let Err(e) = flash::dfu_flash(&bin) {
+            return fail(e);
+        }
+        emit("⑤ 等待键盘重连…");
+        let deadline = Instant::now() + Duration::from_secs(25);
+        loop {
+            {
+                let sh = app.shared.lock().unwrap();
+                if sh.kb.connected && sh.kb.backend.as_deref() == Some("pro") {
+                    break;
+                }
+            }
+            if Instant::now() > deadline {
+                return fail("刷入后未检测到 Pro 固件;键盘若无反应请拔插一次".into());
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        emit("⑥ 写回键位备份…");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = app.hid_tx.send(hid::Cmd::RestoreKeymap(backup, tx));
+        match rx.recv_timeout(Duration::from_secs(10)) {
+            Ok(Ok(())) => emit("✅ 完成!已运行 Pro 固件,键位已恢复"),
+            _ => emit("✅ 固件已刷入(键位写回失败,备份文件仍在,可在 VIA 里手动恢复)"),
+        }
+        app.push_frame();
+    });
+    Ok(())
 }
 
 #[tauri::command]
@@ -370,7 +466,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config])
+        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config, backup_keymap, upgrade_to_pro])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

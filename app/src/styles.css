@@ -122,3 +122,9 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
   letter-spacing: 2px; cursor: pointer;
 }
 .settings button:hover { background: var(--accent); color: #0f1013; }
+
+.pro { border-top: 1px dashed var(--hairline); margin-top: 14px; padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+.pro-row { display: flex; align-items: center; gap: 12px; }
+#pro-status { color: var(--muted); font-size: 12px; flex: 1; }
+#pro-progress { color: var(--accent); font-size: 12px; font-family: var(--mono); min-height: 16px; }
+.pro button:disabled { opacity: 0.35; cursor: default; }
