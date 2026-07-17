@@ -36,6 +36,8 @@ pub enum Cmd {
     DumpKeymap(std::sync::mpsc::Sender<Result<(Vec<u8>, Vec<u8>), String>>),
     /// 写回键位表 + 宏
     RestoreKeymap((Vec<u8>, Vec<u8>), std::sync::mpsc::Sender<Result<(), String>>),
+    /// Pro 0xC3:下发灯位角色表(仅 Pro 后端)
+    SetLedRoles(Vec<u8>),
     /// VIA 0x05:改单个键(临时注入 QK_BOOT 用,刷机后 Restore 会还原)
     SetKeycode { layer: u8, row: u8, col: u8, kc: u16, reply: std::sync::mpsc::Sender<Result<(), String>> },
     /// VIA 0x0B:跳进 bootloader(DFU),设备会立即断开
@@ -345,6 +347,21 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                         None => Err("keyboard not connected".into()),
                     };
                     let _ = reply.send(r);
+                }
+                Cmd::SetLedRoles(roles) => {
+                    if let Some((dev, Backend::Pro)) = &conn {
+                        let mut off = 0usize;
+                        while off < roles.len() {
+                            let cnt = 28.min(roles.len() - off);
+                            let mut pkt = vec![0xC3, off as u8, cnt as u8];
+                            pkt.extend_from_slice(&roles[off..off + cnt]);
+                            if !write_packet(dev, &pkt) {
+                                drop_dev = true;
+                                break;
+                            }
+                            off += cnt;
+                        }
+                    }
                 }
                 Cmd::SetKeycode { layer, row, col, kc, reply } => {
                     let r = match &conn {

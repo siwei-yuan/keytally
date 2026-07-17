@@ -8,8 +8,31 @@ ul_state_t ul_state = {
     .source = UL_SRC_CLAUDE,
 };
 
-static const uint8_t bar_leds[] = UL_BAR_LEDS;
-#define BAR_LEN ARRAY_SIZE(bar_leds)
+// 出厂默认灯位(可被 0xC3 运行时覆盖)
+static const uint8_t default_bar[] = UL_BAR_LEDS;
+
+// 运行时角色表
+static uint8_t led_roles[RGBLIGHT_LED_COUNT];
+static bool    roles_init = false;
+
+static void roles_load_default(void) {
+    for (uint8_t i = 0; i < RGBLIGHT_LED_COUNT; i++) led_roles[i] = UL_ROLE_NONE;
+    for (uint8_t i = 0; i < ARRAY_SIZE(default_bar); i++) {
+        if (default_bar[i] < RGBLIGHT_LED_COUNT) led_roles[default_bar[i]] = UL_ROLE_BAR;
+    }
+    if (UL_ACCENT_LED < RGBLIGHT_LED_COUNT) led_roles[UL_ACCENT_LED] = UL_ROLE_ACCENT;
+    roles_init = true;
+}
+
+// 收集当前角色为某值的灯,按索引升序;返回数量
+static uint8_t roles_collect(uint8_t role, uint8_t *out, uint8_t max) {
+    if (!roles_init) roles_load_default();
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < RGBLIGHT_LED_COUNT && n < max; i++) {
+        if (led_roles[i] == role) out[n++] = i;
+    }
+    return n;
+}
 
 // 是否正在接管灯效(接管期间切到 static 模式;释放时从 EEPROM 恢复用户设置)
 static bool override_active = false;
@@ -62,6 +85,14 @@ void ul_handle_packet(uint8_t *data, uint8_t length) {
         case UL_CMD_QUERY:
             ul_send_state_report();
             break;
+        case UL_CMD_LED_ROLES: {
+            if (!roles_init) roles_load_default();
+            uint8_t off = data[1], cnt = data[2];
+            for (uint8_t i = 0; i < cnt && off + i < RGBLIGHT_LED_COUNT && 3 + i < length; i++) {
+                led_roles[off + i] = data[3 + i];
+            }
+            break;
+        }
     }
 }
 
@@ -123,26 +154,26 @@ static void set_led(uint8_t idx, uint8_t r, uint8_t g, uint8_t b) {
     rgblight_setrgb_at(r, g, b, idx);
 }
 
-// pct 灌进 BAR_LEN 段进度条;gradient=true 用绿→红,否则用 color 填充
-static void render_bar(uint8_t pct, bool gradient, const uint8_t *color, uint8_t val) {
-    if (pct == UL_UNKNOWN) {
-        for (uint8_t i = 0; i < BAR_LEN; i++) set_led(bar_leds[i], 0, 0, 0);
+// pct 灌进 n 段进度条;gradient=true 用绿→红,否则用 color 填充
+static void render_bar(const uint8_t *leds, uint8_t n, uint8_t pct, bool gradient, const uint8_t *color, uint8_t val) {
+    if (pct == UL_UNKNOWN || n == 0) {
+        for (uint8_t i = 0; i < n; i++) set_led(leds[i], 0, 0, 0);
         return;
     }
     if (pct > 100) pct = 100;
-    uint8_t lit = (uint8_t)(((uint16_t)pct * BAR_LEN + 50) / 100);
+    uint8_t lit = (uint8_t)(((uint16_t)pct * n + 50) / 100);
     if (pct > 0 && lit == 0) lit = 1; // 有消耗就至少亮一格
     rgb_t   gc  = grade_color(pct, val);
-    for (uint8_t i = 0; i < BAR_LEN; i++) {
+    for (uint8_t i = 0; i < n; i++) {
         if (i < lit) {
             if (gradient) {
-                set_led(bar_leds[i], gc.r, gc.g, gc.b);
+                set_led(leds[i], gc.r, gc.g, gc.b);
             } else {
-                set_led(bar_leds[i], (uint16_t)color[0] * val / 255, (uint16_t)color[1] * val / 255,
+                set_led(leds[i], (uint16_t)color[0] * val / 255, (uint16_t)color[1] * val / 255,
                         (uint16_t)color[2] * val / 255);
             }
         } else {
-            set_led(bar_leds[i], 0, 0, 0);
+            set_led(leds[i], 0, 0, 0);
         }
     }
 }
@@ -169,10 +200,14 @@ void ul_task(void) {
     const uint8_t          *accent = accent_rgb[ul_state.source];
     uint8_t                 val    = rgblight_get_val();
 
+    uint8_t bar[RGBLIGHT_LED_COUNT], accents[RGBLIGHT_LED_COUNT];
+    uint8_t bar_n    = roles_collect(UL_ROLE_BAR, bar, RGBLIGHT_LED_COUNT);
+    uint8_t accent_n = roles_collect(UL_ROLE_ACCENT, accents, RGBLIGHT_LED_COUNT);
+
     if (!d->valid) {
         take_over();
-        set_led(UL_ACCENT_LED, 30, 30, 30);
-        for (uint8_t i = 0; i < BAR_LEN; i++) set_led(bar_leds[i], 0, 0, 0);
+        for (uint8_t i = 0; i < accent_n; i++) set_led(accents[i], 30, 30, 30);
+        for (uint8_t i = 0; i < bar_n; i++) set_led(bar[i], 0, 0, 0);
         return;
     }
 
@@ -183,18 +218,20 @@ void ul_task(void) {
     switch (ul_state.mode) {
         case UL_MODE_QUOTA:
             take_over();
-            render_bar(d->five_hour_pct, true, NULL, val);
+            render_bar(bar, bar_n, d->five_hour_pct, true, NULL, val);
             // 周限额告警:指示灯在源色和红色之间 1Hz 交替
-            if (d->weekly_pct != UL_UNKNOWN && d->weekly_pct >= UL_WEEKLY_WARN_PCT && (timer_read32() % 1000) < 500) {
-                set_led(UL_ACCENT_LED, val, 0, 0);
-            } else {
-                set_led(UL_ACCENT_LED, ar, ag, ab);
+            for (uint8_t i = 0; i < accent_n; i++) {
+                if (d->weekly_pct != UL_UNKNOWN && d->weekly_pct >= UL_WEEKLY_WARN_PCT && (timer_read32() % 1000) < 500) {
+                    set_led(accents[i], val, 0, 0);
+                } else {
+                    set_led(accents[i], ar, ag, ab);
+                }
             }
             break;
         case UL_MODE_TODAY:
             take_over();
-            render_bar(d->today_pct, false, accent, val);
-            set_led(UL_ACCENT_LED, ar, ag, ab);
+            render_bar(bar, bar_n, d->today_pct, false, accent, val);
+            for (uint8_t i = 0; i < accent_n; i++) set_led(accents[i], ar, ag, ab);
             break;
         case UL_MODE_ACTIVITY:
             if (d->active) {

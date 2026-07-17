@@ -5,6 +5,7 @@ import {
   ACCENTS,
   applyCustom,
   computeLeds,
+  DEFAULT_ROLES,
   computeViaLook,
   renderKeyboard,
   renderUniversal,
@@ -41,6 +42,30 @@ interface FullState {
 }
 
 let state: FullState | null = null;
+const ledSel = new Set<number>();
+
+function boardKey(kb: KbState): string {
+  return `${kb.vid.toString(16).padStart(4, "0")}:${kb.pid.toString(16).padStart(4, "0")}`;
+}
+
+function currentRoles(): number[] {
+  if (!state) return [...DEFAULT_ROLES];
+  const saved = (state.config as unknown as { led_roles?: Record<string, number[]> }).led_roles?.[boardKey(state.kb)];
+  return saved && saved.length ? [...saved] : [...DEFAULT_ROLES];
+}
+
+function renderLedPanel() {
+  const panel = $("#led-panel");
+  if (!state || state.kb.backend !== "pro" || ledSel.size === 0) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  const roles = currentRoles();
+  const names = ["不参与", "进度条", "源指示"];
+  const summary = [...ledSel].sort((a, b) => a - b).map((i) => `${i + 1}(${names[roles[i] ?? 0]})`).join(" ");
+  $("#led-panel-info").textContent = `已选 ${ledSel.size} 颗灯:${summary} → 设为:`;
+}
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
@@ -117,7 +142,7 @@ function render() {
   const budget = kb.source === 0 ? config.claude_daily_budget : config.codex_daily_budget;
   const accent = ACCENTS[kb.source] ?? ACCENTS[0];
   if (kb.backend === "pro") {
-    renderKeyboard($("#preview"), computeLeds(snapshot, kb.mode, kb.source, budget), accent);
+    renderKeyboard($("#preview"), computeLeds(snapshot, kb.mode, kb.source, budget, currentRoles()), accent, ledSel);
   } else if (kb.lighting === "rgb_matrix") {
     // 逐键 RGB 键盘:整板同色
     renderUniversal($("#preview"), computeViaLook(snapshot, kb.mode, kb.source, budget), accent);
@@ -226,13 +251,83 @@ window.addEventListener("DOMContentLoaded", async () => {
         claude: { valid: true, five_hour_pct: 63, weekly_pct: 17, today_tokens: 2_615_737, active: true },
         codex: { valid: true, five_hour_pct: null, weekly_pct: 1, today_tokens: 0, active: false },
       },
-      kb: { mode: 0, source: 0, connected: false, device_name: null, backend: null, lighting: null, vid: 0, pid: 0 },
+      kb: {
+        mode: 0, source: 0, connected: false, device_name: null,
+        // 浏览器调试:?pro 强制逐灯编辑模式
+        backend: location.search.includes("pro") ? "pro" : null,
+        lighting: null, vid: 0x4753, pid: 0x4003,
+      },
       config: { claude_daily_budget: 5_000_000, codex_daily_budget: 5_000_000, warn_threshold: 80, quota_metric: 0, claude_color: "#D97757", codex_color: "#10A37F" },
     };
   }
   render();
   renderPro();
   fillSettings();
+
+  // ---- 灯位选区编辑(Pro 模式):点选 / 拖拽框选,下方弹出职责面板 ----
+  const preview = $("#preview");
+  let dragStart: { x: number; y: number } | null = null;
+  let dragBox: HTMLDivElement | null = null;
+
+  preview.addEventListener("pointerdown", (e) => {
+    if (!state || state.kb.backend !== "pro") return;
+    const hit = (e.target as Element).closest?.(".led-hit") as SVGGElement | null;
+    if (hit) {
+      const idx = Number(hit.dataset.idx);
+      if (ledSel.has(idx)) ledSel.delete(idx);
+      else ledSel.add(idx);
+      render();
+      renderLedPanel();
+      return;
+    }
+    dragStart = { x: e.clientX, y: e.clientY };
+    dragBox = document.createElement("div");
+    dragBox.className = "drag-box";
+    document.body.appendChild(dragBox);
+  });
+
+  window.addEventListener("pointermove", (e) => {
+    if (!dragStart || !dragBox) return;
+    const x = Math.min(dragStart.x, e.clientX), y = Math.min(dragStart.y, e.clientY);
+    const w = Math.abs(e.clientX - dragStart.x), h = Math.abs(e.clientY - dragStart.y);
+    Object.assign(dragBox.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
+  });
+
+  window.addEventListener("pointerup", (e) => {
+    if (!dragStart) return;
+    const x1 = Math.min(dragStart.x, e.clientX), y1 = Math.min(dragStart.y, e.clientY);
+    const x2 = Math.max(dragStart.x, e.clientX), y2 = Math.max(dragStart.y, e.clientY);
+    dragBox?.remove();
+    dragBox = null;
+    dragStart = null;
+    if (x2 - x1 < 6 && y2 - y1 < 6) return; // 视为点击空白
+    if (!state || state.kb.backend !== "pro") return;
+    document.querySelectorAll<SVGGElement>("#preview .led-hit").forEach((g) => {
+      const r = g.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      if (cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2) ledSel.add(Number(g.dataset.idx));
+    });
+    render();
+    renderLedPanel();
+  });
+
+  $("#led-panel").addEventListener("click", async (e) => {
+    const btn = (e.target as Element).closest("button");
+    if (!btn || !state) return;
+    if (btn.id === "led-clear") {
+      ledSel.clear();
+    } else {
+      const role = Number(btn.dataset.role);
+      const roles = currentRoles();
+      ledSel.forEach((i) => (roles[i] = role));
+      (state.config as unknown as { led_roles: Record<string, number[]> }).led_roles ??= {};
+      (state.config as unknown as { led_roles: Record<string, number[]> }).led_roles[boardKey(state.kb)] = roles;
+      ledSel.clear();
+      invoke("set_led_roles", { roles });
+    }
+    render();
+    renderLedPanel();
+  });
 
   $("#backup-keymap").addEventListener("click", async () => {
     try {

@@ -131,3 +131,21 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 .pro button.armed { border-color: #d0342c; color: #d0342c; }
 .pro-note { color: var(--muted); font-size: 11px; line-height: 1.7; margin: 0; }
 .pro-note b { color: var(--accent); font-weight: 600; }
+
+#led-panel {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  border: 1px solid var(--accent); border-radius: 3px; padding: 10px 12px;
+  font-size: 12px; color: var(--text);
+}
+#led-panel[hidden] { display: none; }
+#led-panel button {
+  background: #16171b; border: 1px solid var(--hairline); border-radius: 2px;
+  color: var(--text); padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer;
+}
+#led-panel button:hover { border-color: var(--accent); color: var(--accent); }
+#led-panel-info { color: var(--muted); font-family: var(--mono); }
+.drag-box {
+  position: fixed; border: 1px dashed var(--accent); background: #e8641b18;
+  pointer-events: none; z-index: 99;
+}
+#preview .led-hit { cursor: pointer; }

@@ -26,60 +26,68 @@ const OFF = "#2a2c31";
 const INVALID = "#4a4d55";
 
 export interface LedFrame {
-  // 6 颗灯的颜色;索引 0 = 数据源指示,1-5 = 进度条(与固件 UL_ACCENT_LED/UL_BAR_LEDS 对应)
   leds: string[];
   breathing: boolean; // 活动模式且干活中:整组呼吸
-  blinkAccent: boolean; // 额度模式周限额告警:指示灯闪红(仅 LED 0)
+  blinkAccent: boolean; // 额度模式周限额告警:指示灯闪红
+  accentIdx: number[]; // 指示灯索引(闪红作用对象)
   blinkAll: boolean; // VIA 通用模式的告警:整组闪红
-  passthrough: boolean; // 不接管(活动模式空闲):显示用户自己的灯效
+  passthrough: boolean; // 不接管:显示用户自己的灯效
 }
+
+export const DEFAULT_ROLES = [2, 1, 1, 1, 1, 1]; // 0=不参与 1=进度条 2=源指示
 
 function gradeColor(pct: number): string {
   const hue = 120 * (1 - Math.min(pct, 100) / 100);
   return `hsl(${hue.toFixed(0)}, 72%, 46%)`;
 }
 
-function barColors(pct: number | null, color: (p: number) => string): string[] {
-  if (pct === null) return Array(5).fill(OFF);
-  const clamped = Math.min(pct, 100);
-  let lit = Math.round((clamped * 5) / 100);
-  if (clamped > 0 && lit === 0) lit = 1; // 有消耗就至少亮一格(同固件)
-  return Array.from({ length: 5 }, (_, i) => (i < lit ? color(clamped) : OFF));
-}
-
-export function computeLeds(snap: Snapshot, mode: number, source: number, budget: number): LedFrame {
+export function computeLeds(
+  snap: Snapshot,
+  mode: number,
+  source: number,
+  budget: number,
+  roles: number[] = DEFAULT_ROLES
+): LedFrame {
   const u = source === 0 ? snap.claude : snap.codex;
   const accent = ACCENTS[source] ?? ACCENTS[0];
-
-  const base = { breathing: false, blinkAccent: false, blinkAll: false, passthrough: false };
-  if (!u.valid) {
-    return { ...base, leds: [INVALID, OFF, OFF, OFF, OFF, OFF] };
-  }
-
+  const n = roles.length;
+  const barIdx = roles.flatMap((r, i) => (r === 1 ? [i] : []));
+  const accIdx = roles.flatMap((r, i) => (r === 2 ? [i] : []));
+  const base = { breathing: false, blinkAccent: false, accentIdx: accIdx, blinkAll: false, passthrough: false };
+  const paint = (barPct: number | null, barColor: (p: number) => string, warn = false): LedFrame => {
+    const leds = Array(n).fill(OFF);
+    accIdx.forEach((i) => (leds[i] = u.valid ? accent : INVALID));
+    if (barPct !== null) {
+      const clamped = Math.min(barPct, 100);
+      let lit = Math.round((clamped * barIdx.length) / 100);
+      if (clamped > 0 && lit === 0) lit = 1;
+      barIdx.forEach((led, k) => (leds[led] = k < lit ? barColor(clamped) : OFF));
+    }
+    return { ...base, leds, blinkAccent: warn };
+  };
+  if (!u.valid) return paint(null, gradeColor);
   if (mode === 0) {
-    const warn = u.weekly_pct !== null && u.weekly_pct >= WARN_PCT;
-    return { ...base, leds: [accent, ...barColors(u.five_hour_pct, gradeColor)], blinkAccent: warn };
+    return paint(u.five_hour_pct ?? null, gradeColor, u.weekly_pct !== null && u.weekly_pct >= WARN_PCT);
   }
   if (mode === 1) {
-    const pct = budget > 0 ? Math.min(100, (u.today_tokens * 100) / budget) : null;
-    return { ...base, leds: [accent, ...barColors(pct, () => accent)] };
+    return paint(budget > 0 ? (u.today_tokens * 100) / budget : null, () => accent);
   }
-  // 活动模式
   if (u.active) {
-    return { ...base, leds: Array(6).fill(accent), breathing: true };
+    return { ...base, leds: Array(n).fill(accent), breathing: true };
   }
-  return { ...base, leds: Array(6).fill(OFF), passthrough: true };
+  return { ...base, leds: Array(n).fill(OFF), passthrough: true };
 }
 
 /// VIA 通用模式 + rgblight 键盘:N 颗灯同色
 export function viaLookToFrame(look: ViaLook, n = 6): LedFrame {
   if (look.color === null) {
-    return { leds: Array(n).fill(OFF), breathing: false, blinkAccent: false, blinkAll: false, passthrough: true };
+    return { leds: Array(n).fill(OFF), breathing: false, blinkAccent: false, accentIdx: [], blinkAll: false, passthrough: true };
   }
   return {
     leds: Array(n).fill(look.color),
     breathing: look.breathing,
     blinkAccent: false,
+    accentIdx: [],
     blinkAll: look.blinkWarn,
     passthrough: false,
   };
@@ -166,7 +174,7 @@ export function renderUniversal(el: HTMLElement, look: ViaLook, accent: string) 
   el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="--accent:${accent}">${keyRects}</svg>`;
 }
 
-export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string) {
+export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string, selected?: Set<number>) {
   const w = 16 * U + 14; // 右侧留白,容纳 LED 区四角括号
   const h = 5 * U;
 
@@ -195,11 +203,14 @@ export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string)
       const cy = BADGE_Y * U + 16 + rowi * 22;
       const cls = [
         frame.breathing ? "breathing" : "",
-        (i === 0 && frame.blinkAccent) || frame.blinkAll ? "blink-warn" : "",
+        (frame.accentIdx.includes(i) && frame.blinkAccent) || frame.blinkAll ? "blink-warn" : "",
         frame.passthrough ? "passthrough" : "",
       ].join(" ");
       const glow = !frame.passthrough && color !== OFF && color !== INVALID ? `filter="url(#glow)"` : "";
-      return `<g class="${cls}"><circle cx="${cx}" cy="${cy}" r="7.5" fill="#0c0b08"/><circle cx="${cx}" cy="${cy}" r="6" fill="${color}" ${glow}/><ellipse cx="${cx - 2}" cy="${cy - 2.2}" rx="2.2" ry="1.6" fill="#ffffff55"/></g>`;
+      const sel = selected?.has(i)
+        ? `<circle cx="${cx}" cy="${cy}" r="10" fill="none" stroke="${accent}" stroke-width="1.5" stroke-dasharray="3 2"/>`
+        : "";
+      return `<g class="${cls} led-hit" data-idx="${i}">${sel}<circle cx="${cx}" cy="${cy}" r="7.5" fill="#0c0b08"/><circle cx="${cx}" cy="${cy}" r="6" fill="${color}" ${glow}/><ellipse cx="${cx - 2}" cy="${cy - 2.2}" rx="2.2" ry="1.6" fill="#ffffff55"/></g>`;
     })
     .join("");
 

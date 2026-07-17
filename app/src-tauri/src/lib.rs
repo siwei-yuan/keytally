@@ -15,6 +15,8 @@ use tauri::{Emitter, Manager};
 pub struct AppConfig {
     pub claude_daily_budget: u64,
     pub codex_daily_budget: u64,
+    /// vid:pid → 每颗灯的角色(0=不参与 1=进度条 2=源指示)
+    pub led_roles: std::collections::HashMap<String, Vec<u8>>,
     /// 周限额告警阈值(%)
     pub warn_threshold: u8,
     /// 额度模式指标:0=5h 优先,1=周优先,2=两者取大
@@ -32,6 +34,7 @@ impl Default for AppConfig {
             quota_metric: 0,
             claude_color: "#D97757".into(),
             codex_color: "#10A37F".into(),
+            led_roles: Default::default(),
         }
     }
 }
@@ -166,6 +169,27 @@ impl App {
 #[tauri::command]
 fn get_state(app: tauri::State<Arc<App>>) -> FullState {
     app.full_state()
+}
+
+fn roles_for(cfg: &AppConfig, vid: u16, pid: u16) -> Vec<u8> {
+    let key = format!("{vid:04x}:{pid:04x}");
+    cfg.led_roles.get(&key).cloned().unwrap_or_else(|| vec![2, 1, 1, 1, 1, 1])
+}
+
+#[tauri::command]
+fn set_led_roles(app: tauri::State<Arc<App>>, handle: tauri::AppHandle, roles: Vec<u8>) {
+    let cfg = {
+        let mut sh = app.shared.lock().unwrap();
+        let key = format!("{:04x}:{:04x}", sh.kb.vid, sh.kb.pid);
+        sh.config.led_roles.insert(key, roles.clone());
+        sh.config.clone()
+    };
+    if let Some(dir) = app.config_path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&app.config_path, serde_json::to_vec_pretty(&cfg).unwrap());
+    let _ = app.hid_tx.send(hid::Cmd::SetLedRoles(roles));
+    let _ = handle.emit("state", app.full_state());
 }
 
 fn dump_keymap_blocking(app: &App) -> Result<(Vec<u8>, Vec<u8>), String> {
@@ -490,6 +514,10 @@ pub fn run() {
                                 sh.kb.lighting = Some(lighting.to_string());
                                 sh.kb.vid = vid;
                                 sh.kb.pid = pid;
+                                if backend == "pro" {
+                                    let roles = roles_for(&sh.config, vid, pid);
+                                    let _ = app.hid_tx.send(hid::Cmd::SetLedRoles(roles));
+                                }
                             }
                             hid::Event::Disconnected => {
                                 sh.kb.connected = false;
@@ -519,7 +547,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config, backup_keymap, upgrade_to_pro, restore_stock])
+        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config, backup_keymap, upgrade_to_pro, restore_stock, set_led_roles])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
