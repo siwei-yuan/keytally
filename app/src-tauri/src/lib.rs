@@ -233,6 +233,28 @@ fn backup_keymap(app: tauri::State<Arc<App>>) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
+/// 软件跳转优先;失败则临时把 layer1 Esc 写成 QK_BOOT 让用户按 Fn+Esc
+fn enter_bootloader_with_fallback(app: &Arc<App>, emit: &dyn Fn(&str)) -> Result<(), String> {
+    emit("尝试软件进入 bootloader…");
+    let _ = app.hid_tx.send(hid::Cmd::BootloaderJump);
+    std::thread::sleep(Duration::from_secs(2));
+    if flash::wait_for_dfu(Duration::from_secs(8)).is_ok() {
+        return Ok(());
+    }
+    emit("固件不响应软件跳转,改用按键方案…");
+    std::thread::sleep(Duration::from_secs(4)); // 等 HID 线程重连
+    let (tx, rx) = std::sync::mpsc::channel();
+    let _ = app.hid_tx.send(hid::Cmd::SetKeycode { layer: 1, row: 0, col: 0, kc: 0x7C00, reply: tx });
+    match rx.recv_timeout(Duration::from_secs(10)) {
+        Ok(Ok(())) => {
+            emit("请在键盘上按 Fn+Esc 进入刷机模式(等待 120 秒)…");
+            flash::wait_for_dfu(Duration::from_secs(120))
+                .map_err(|e| format!("{e};最后手段:PCB 背面 reset 键"))
+        }
+        _ => Err("临时刷机键写入失败;键盘未受影响".into()),
+    }
+}
+
 #[tauri::command]
 fn restore_stock(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Result<(), String> {
     let (vid, pid) = {
@@ -250,17 +272,39 @@ fn restore_stock(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resul
         let emit = |msg: &str| {
             let _ = handle.emit("pro-progress", msg.to_string());
         };
-        emit(&format!("① 还原目标:{kind};进入 bootloader…"));
-        let _ = app.hid_tx.send(hid::Cmd::BootloaderJump);
-        std::thread::sleep(Duration::from_secs(2));
-        if let Err(e) = flash::wait_for_dfu(Duration::from_secs(15)) {
+        emit(&format!("① 还原目标:{kind};备份键位…"));
+        let backup = dump_keymap_blocking(&app).ok();
+        if let Some((k, m)) = &backup {
+            let _ = write_backup(&app, k, m);
+        }
+        if let Err(e) = enter_bootloader_with_fallback(&app, &emit) {
             return emit(&format!("❌ {e}"));
         }
         emit("② 刷入还原固件…");
         if let Err(e) = flash::dfu_flash(&stock) {
             return emit(&format!("❌ {e}"));
         }
-        emit("✅ 已还原,键盘将自动重启(如为纯净 VIA 固件,键位可在 VIA 里恢复)");
+        emit("③ 等待键盘重连…");
+        let deadline = Instant::now() + Duration::from_secs(25);
+        let reconnected = loop {
+            {
+                let sh = app.shared.lock().unwrap();
+                if sh.kb.connected {
+                    break true;
+                }
+            }
+            if Instant::now() > deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        };
+        if let (true, Some((k, m))) = (reconnected, backup) {
+            emit("④ 写回键位备份…");
+            let (tx, rx) = std::sync::mpsc::channel();
+            let _ = app.hid_tx.send(hid::Cmd::RestoreKeymap((k, m), tx));
+            let _ = rx.recv_timeout(Duration::from_secs(10));
+        }
+        emit("✅ 已还原,键盘恢复为普通 VIA 键盘");
     });
     Ok(())
 }
@@ -293,25 +337,9 @@ fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resu
             }
             Err(e) => return fail(format!("备份失败,中止:{e}")),
         };
-        emit("② 尝试软件进入 bootloader…");
-        let _ = app.hid_tx.send(hid::Cmd::BootloaderJump);
-        std::thread::sleep(Duration::from_secs(2));
-        emit("③ 等待 DFU 设备…");
-        if flash::wait_for_dfu(Duration::from_secs(8)).is_err() {
-            // 原厂固件禁用了软件跳转:临时把 layer1 的 Esc 位写成 QK_BOOT,让用户按 Fn+Esc
-            emit("③ 固件不响应软件跳转,改用按键方案…");
-            std::thread::sleep(Duration::from_secs(4)); // 等 HID 线程重连
-            let (tx, rx) = std::sync::mpsc::channel();
-            let _ = app.hid_tx.send(hid::Cmd::SetKeycode { layer: 1, row: 0, col: 0, kc: 0x7C00, reply: tx });
-            match rx.recv_timeout(Duration::from_secs(10)) {
-                Ok(Ok(())) => {
-                    emit("③ 请在键盘上按 Fn+Esc 进入刷机模式(等待 120 秒)…");
-                    if let Err(e) = flash::wait_for_dfu(Duration::from_secs(120)) {
-                        return fail(format!("{e};最后手段:PCB 背面 reset 键"));
-                    }
-                }
-                _ => return fail("临时刷机键写入失败;键盘未受影响".into()),
-            }
+        emit("②/③ 进入 bootloader…");
+        if let Err(e) = enter_bootloader_with_fallback(&app, &emit) {
+            return fail(e);
         }
         emit("④ 备份原厂固件…");
         let stock = flash::stock_backup_path(app.config_path.parent().unwrap_or(std::path::Path::new(".")));
