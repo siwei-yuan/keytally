@@ -48,32 +48,29 @@ function fmtPct(p: number | null): string {
   return p === null ? "--" : `${p}%`;
 }
 
-// 车速表式半圆仪表盘:0 → 100%,指针指示,超 100% 整弧变红
+// 仪表盘:270° 弧 + 底部缺口,百分比居中显示;超 100% 变红
 function gaugeSvg(pct: number): string {
   const frac = Math.min(pct, 100) / 100;
   const over = pct >= 100;
   const color = over ? "#d0342c" : `hsl(${(120 * (1 - frac)).toFixed(0)}, 72%, 46%)`;
-  const cx = 15, cy = 14, r = 12;
-  const arcLen = Math.PI * r;
-  // 指针角度:0% 指左,100% 指右
-  const t = Math.PI * frac;
-  const nx = cx - 8.5 * Math.cos(t), ny = cy - 8.5 * Math.sin(t);
-  // 刻度:0/25/50/75/100
-  const ticks = [0, 0.25, 0.5, 0.75, 1]
-    .map((f) => {
-      const a = Math.PI * f;
-      const x1 = cx - (r - 2) * Math.cos(a), y1 = cy - (r - 2) * Math.sin(a);
-      const x2 = cx - r * Math.cos(a), y2 = cy - r * Math.sin(a);
-      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#ffffff45" stroke-width="1"/>`;
-    })
-    .join("");
-  return `<svg class="gauge" viewBox="0 0 30 17" width="36" height="20" role="img">
-    <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="#25262b" stroke-width="3.5" stroke-linecap="round"/>
-    <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round"
-      stroke-dasharray="${(arcLen * frac).toFixed(1)} ${arcLen.toFixed(1)}"/>
-    ${ticks}
-    <line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="#e8e6e1" stroke-width="1.5" stroke-linecap="round"/>
-    <circle cx="${cx}" cy="${cy}" r="1.8" fill="#e8e6e1"/>
+  const cx = 13, cy = 13, r = 10.5;
+  // 时钟角度(0 = 12 点,顺时针);缺口在正下方,225° 起扫 270°
+  const polar = (deg: number): [number, number] => {
+    const a = ((deg - 90) * Math.PI) / 180;
+    return [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  };
+  const arc = (fromDeg: number, sweep: number, stroke: string) => {
+    const [x1, y1] = polar(fromDeg);
+    const [x2, y2] = polar(fromDeg + sweep);
+    const large = sweep > 180 ? 1 : 0;
+    return `<path d="M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}" fill="none" stroke="${stroke}" stroke-width="2.6" stroke-linecap="round"/>`;
+  };
+  const label = pct >= 1000 ? "999" : String(Math.round(pct));
+  return `<svg class="gauge" viewBox="0 0 26 26" width="26" height="26" role="img">
+    ${arc(225, 270, "#25262b")}
+    ${frac > 0 ? arc(225, 270 * frac, color) : ""}
+    <text x="${cx}" y="${cy + 0.5}" text-anchor="middle" dominant-baseline="middle"
+      style="font-size:7.5px;font-family:var(--mono);fill:${over ? "#d0342c" : "#e8e6e1"}">${label}%</text>
   </svg>`;
 }
 
@@ -133,7 +130,7 @@ function render() {
   $("#stats").innerHTML = `
     <div class="stat"><span class="k">5 小时窗口</span><span class="v">${fmtPct(u.five_hour_pct)}</span></div>
     <div class="stat"><span class="k">周限额</span><span class="v">${fmtPct(u.weekly_pct)}</span></div>
-    <div class="stat"><span class="k">今日消耗</span><span class="v">${fmtTokens(u.today_tokens)}${todayPct === null ? "" : gaugeSvg(todayPct)}</span></div>
+    <div class="stat"><span class="k">今日消耗 (tokens)</span><span class="v">${fmtTokens(u.today_tokens)}${todayPct === null ? "" : gaugeSvg(todayPct)}</span></div>
     <div class="stat"><span class="k">状态</span><span class="v">${u.valid ? (u.active ? "🔥干活中" : "空闲") : "未安装"}</span></div>`;
 }
 
