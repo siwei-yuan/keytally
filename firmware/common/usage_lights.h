@@ -12,6 +12,8 @@
 #define UL_CMD_QUERY 0xC2
 // 灯位角色表:data[1]=起始索引,data[2]=数量,data[3..]=角色数组(存 RAM,app 连接时重推)
 #define UL_CMD_LED_ROLES 0xC3
+// 进度条样式:data[1] 0=数量(亮灯数=百分比) 1=颜色(全亮,整体绿→红)
+#define UL_CMD_BAR_STYLE 0xC4
 #define UL_PROTOCOL_VERSION 1
 #define UL_UNKNOWN 0xFF
 #define UL_TIMEOUT_MS 60000

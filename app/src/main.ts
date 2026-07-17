@@ -48,6 +48,10 @@ function boardKey(kb: KbState): string {
   return `${kb.vid.toString(16).padStart(4, "0")}:${kb.pid.toString(16).padStart(4, "0")}`;
 }
 
+function barStyle(): number {
+  return (state?.config as unknown as { bar_style?: number })?.bar_style ?? 0;
+}
+
 function currentRoles(): number[] {
   if (!state) return [...DEFAULT_ROLES];
   const saved = (state.config as unknown as { led_roles?: Record<string, number[]> }).led_roles?.[boardKey(state.kb)];
@@ -69,6 +73,11 @@ function renderLedPanel() {
   const uniform = [...ledSel].every((i) => roles[i] === roles[[...ledSel][0]]) ? roles[[...ledSel][0]] : null;
   panel.querySelectorAll<HTMLButtonElement>("button[data-role]").forEach((b) => {
     b.classList.toggle("active", uniform !== null && Number(b.dataset.role) === uniform);
+  });
+  const hasBar = [...ledSel].some((i) => roles[i] === 1);
+  $("#bar-style-row").hidden = !hasBar;
+  panel.querySelectorAll<HTMLButtonElement>("button[data-style]").forEach((b) => {
+    b.classList.toggle("active", Number(b.dataset.style) === barStyle());
   });
 }
 
@@ -147,7 +156,7 @@ function render() {
   const budget = kb.source === 0 ? config.claude_daily_budget : config.codex_daily_budget;
   const accent = ACCENTS[kb.source] ?? ACCENTS[0];
   if (kb.backend === "pro") {
-    renderKeyboard($("#preview"), computeLeds(snapshot, kb.mode, kb.source, budget, currentRoles()), accent, ledSel);
+    renderKeyboard($("#preview"), computeLeds(snapshot, kb.mode, kb.source, budget, currentRoles(), barStyle()), accent, ledSel);
   } else if (kb.lighting === "rgb_matrix") {
     // 逐键 RGB 键盘:整板同色
     renderUniversal($("#preview"), computeViaLook(snapshot, kb.mode, kb.source, budget), accent);
@@ -321,6 +330,9 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (!btn || !state) return;
     if (btn.id === "led-clear") {
       ledSel.clear();
+    } else if (btn.dataset.style !== undefined) {
+      (state.config as unknown as { bar_style: number }).bar_style = Number(btn.dataset.style);
+      invoke("set_led_roles", { roles: currentRoles(), style: Number(btn.dataset.style) });
     } else {
       const role = Number(btn.dataset.role);
       const roles = currentRoles();
@@ -328,7 +340,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       (state.config as unknown as { led_roles: Record<string, number[]> }).led_roles ??= {};
       (state.config as unknown as { led_roles: Record<string, number[]> }).led_roles[boardKey(state.kb)] = roles;
       // 保留选区:按钮高亮 + 摘要更新就是保存成功的确认
-      invoke("set_led_roles", { roles });
+      invoke("set_led_roles", { roles, style: barStyle() });
     }
     render();
     renderLedPanel();

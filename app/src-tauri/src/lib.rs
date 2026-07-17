@@ -17,6 +17,8 @@ pub struct AppConfig {
     pub codex_daily_budget: u64,
     /// vid:pid → 每颗灯的角色(0=不参与 1=进度条 2=源指示)
     pub led_roles: std::collections::HashMap<String, Vec<u8>>,
+    /// 进度条样式:0=数量 1=颜色
+    pub bar_style: u8,
     /// 周限额告警阈值(%)
     pub warn_threshold: u8,
     /// 额度模式指标:0=5h 优先,1=周优先,2=两者取大
@@ -35,6 +37,7 @@ impl Default for AppConfig {
             claude_color: "#D97757".into(),
             codex_color: "#10A37F".into(),
             led_roles: Default::default(),
+            bar_style: 0,
         }
     }
 }
@@ -177,18 +180,19 @@ fn roles_for(cfg: &AppConfig, vid: u16, pid: u16) -> Vec<u8> {
 }
 
 #[tauri::command]
-fn set_led_roles(app: tauri::State<Arc<App>>, handle: tauri::AppHandle, roles: Vec<u8>) {
+fn set_led_roles(app: tauri::State<Arc<App>>, handle: tauri::AppHandle, roles: Vec<u8>, style: u8) {
     let cfg = {
         let mut sh = app.shared.lock().unwrap();
         let key = format!("{:04x}:{:04x}", sh.kb.vid, sh.kb.pid);
         sh.config.led_roles.insert(key, roles.clone());
+        sh.config.bar_style = style;
         sh.config.clone()
     };
     if let Some(dir) = app.config_path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     let _ = std::fs::write(&app.config_path, serde_json::to_vec_pretty(&cfg).unwrap());
-    let _ = app.hid_tx.send(hid::Cmd::SetLedRoles(roles));
+    let _ = app.hid_tx.send(hid::Cmd::SetLedRoles(roles, style));
     let _ = handle.emit("state", app.full_state());
 }
 
@@ -516,7 +520,8 @@ pub fn run() {
                                 sh.kb.pid = pid;
                                 if backend == "pro" {
                                     let roles = roles_for(&sh.config, vid, pid);
-                                    let _ = app.hid_tx.send(hid::Cmd::SetLedRoles(roles));
+                                    let style = sh.config.bar_style;
+                                    let _ = app.hid_tx.send(hid::Cmd::SetLedRoles(roles, style));
                                 }
                             }
                             hid::Event::Disconnected => {

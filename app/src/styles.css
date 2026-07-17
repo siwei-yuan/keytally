@@ -156,3 +156,5 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
   pointer-events: none; z-index: 99;
 }
 #preview .led-hit { cursor: pointer; }
+#bar-style-row { display: inline-flex; align-items: center; gap: 8px; }
+#bar-style-row .sep { color: var(--hairline); }

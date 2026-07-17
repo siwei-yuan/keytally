@@ -13,6 +13,7 @@ static const uint8_t default_bar[] = UL_BAR_LEDS;
 
 // 运行时角色表
 static uint8_t led_roles[RGBLIGHT_LED_COUNT];
+static uint8_t bar_style = 0; // 0=数量 1=颜色
 static bool    roles_init = false;
 
 static void roles_load_default(void) {
@@ -84,6 +85,9 @@ void ul_handle_packet(uint8_t *data, uint8_t length) {
             break;
         case UL_CMD_QUERY:
             ul_send_state_report();
+            break;
+        case UL_CMD_BAR_STYLE:
+            bar_style = data[1] == 1 ? 1 : 0;
             break;
         case UL_CMD_LED_ROLES: {
             if (!roles_init) roles_load_default();
@@ -161,9 +165,13 @@ static void render_bar(const uint8_t *leds, uint8_t n, uint8_t pct, bool gradien
         return;
     }
     if (pct > 100) pct = 100;
+    rgb_t gc = grade_color(pct, val);
+    if (bar_style == 1) { // 颜色式:全亮,整体颜色编码百分比
+        for (uint8_t i = 0; i < n; i++) set_led(leds[i], gc.r, gc.g, gc.b);
+        return;
+    }
     uint8_t lit = (uint8_t)(((uint16_t)pct * n + 50) / 100);
     if (pct > 0 && lit == 0) lit = 1; // 有消耗就至少亮一格
-    rgb_t   gc  = grade_color(pct, val);
     for (uint8_t i = 0; i < n; i++) {
         if (i < lit) {
             if (gradient) {

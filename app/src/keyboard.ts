@@ -46,7 +46,8 @@ export function computeLeds(
   mode: number,
   source: number,
   budget: number,
-  roles: number[] = DEFAULT_ROLES
+  roles: number[] = DEFAULT_ROLES,
+  barStyle = 0
 ): LedFrame {
   const u = source === 0 ? snap.claude : snap.codex;
   const accent = ACCENTS[source] ?? ACCENTS[0];
@@ -59,9 +60,13 @@ export function computeLeds(
     accIdx.forEach((i) => (leds[i] = u.valid ? accent : INVALID));
     if (barPct !== null) {
       const clamped = Math.min(barPct, 100);
-      let lit = Math.round((clamped * barIdx.length) / 100);
-      if (clamped > 0 && lit === 0) lit = 1;
-      barIdx.forEach((led, k) => (leds[led] = k < lit ? barColor(clamped) : OFF));
+      if (barStyle === 1) {
+        barIdx.forEach((led) => (leds[led] = barColor(clamped)));
+      } else {
+        let lit = Math.round((clamped * barIdx.length) / 100);
+        if (clamped > 0 && lit === 0) lit = 1;
+        barIdx.forEach((led, k) => (leds[led] = k < lit ? barColor(clamped) : OFF));
+      }
     }
     return { ...base, leds, blinkAccent: warn };
   };
