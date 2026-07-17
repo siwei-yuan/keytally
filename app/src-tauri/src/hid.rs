@@ -32,10 +32,10 @@ pub enum Cmd {
     Frame(Frame),
     /// 仅 Pro 后端有键盘侧状态;VIA 后端忽略
     SetState { mode: Option<u8>, source: Option<u8> },
-    /// VIA 动态键位表整块读取(层数×5行×16列×2字节,think65v3)
-    DumpKeymap(std::sync::mpsc::Sender<Result<Vec<u8>, String>>),
-    /// 写回键位表
-    RestoreKeymap(Vec<u8>, std::sync::mpsc::Sender<Result<(), String>>),
+    /// VIA 动态键位表 + 宏缓冲区整块读取
+    DumpKeymap(std::sync::mpsc::Sender<Result<(Vec<u8>, Vec<u8>), String>>),
+    /// 写回键位表 + 宏
+    RestoreKeymap((Vec<u8>, Vec<u8>), std::sync::mpsc::Sender<Result<(), String>>),
     /// VIA 0x0B:跳进 bootloader(DFU),设备会立即断开
     BootloaderJump,
     /// 恢复灯效并结束线程(app 退出前调用)
@@ -45,6 +45,44 @@ pub enum Cmd {
 const KM_ROWS: usize = 5;
 const KM_COLS: usize = 16;
 
+fn via_chunked_read(dev: &hidapi::HidDevice, cmd: u8, total: usize) -> Result<Vec<u8>, String> {
+    let mut buf = Vec::with_capacity(total);
+    let mut off = 0usize;
+    while off < total {
+        let size = 28.min(total - off) as u8;
+        let req = [cmd, (off >> 8) as u8, off as u8, size];
+        let resp = handled(xfer(dev, &req, 4)).ok_or_else(|| format!("read @{off} failed"))?;
+        buf.extend_from_slice(&resp[4..4 + size as usize]);
+        off += size as usize;
+    }
+    Ok(buf)
+}
+
+fn via_chunked_write(dev: &hidapi::HidDevice, cmd: u8, data: &[u8]) -> Result<(), String> {
+    let mut off = 0usize;
+    while off < data.len() {
+        let size = 28.min(data.len() - off);
+        let mut req = vec![cmd, (off >> 8) as u8, off as u8, size as u8];
+        req.extend_from_slice(&data[off..off + size]);
+        if handled(xfer(dev, &req, 4)).is_none() {
+            return Err(format!("write @{off} failed"));
+        }
+        off += size;
+    }
+    Ok(())
+}
+
+fn via_dump_all(dev: &hidapi::HidDevice) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let layers = handled(xfer(dev, &[0x11], 1)).ok_or("layer count query failed")?[1] as usize;
+    let keymap = via_chunked_read(dev, 0x12, layers * KM_ROWS * KM_COLS * 2)?;
+    // 宏缓冲区:0x0D 查大小,0x0E 读
+    let size_resp = handled(xfer(dev, &[0x0D], 1)).ok_or("macro size query failed")?;
+    let macro_total = u16::from_be_bytes([size_resp[1], size_resp[2]]) as usize;
+    let macros = if macro_total > 0 { via_chunked_read(dev, 0x0E, macro_total)? } else { Vec::new() };
+    Ok((keymap, macros))
+}
+
+#[allow(dead_code)]
 fn via_dump_keymap(dev: &hidapi::HidDevice) -> Result<Vec<u8>, String> {
     let layers = handled(xfer(dev, &[0x11], 1)).ok_or("layer count query failed")?[1] as usize;
     let total = layers * KM_ROWS * KM_COLS * 2;
@@ -292,14 +330,16 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                 }
                 Cmd::DumpKeymap(reply) => {
                     let r = match &conn {
-                        Some((dev, _)) => via_dump_keymap(dev),
+                        Some((dev, _)) => via_dump_all(dev),
                         None => Err("keyboard not connected".into()),
                     };
                     let _ = reply.send(r);
                 }
-                Cmd::RestoreKeymap(data, reply) => {
+                Cmd::RestoreKeymap((keymap, macros), reply) => {
                     let r = match &conn {
-                        Some((dev, _)) => via_restore_keymap(dev, &data),
+                        Some((dev, _)) => via_restore_keymap(dev, &keymap).and_then(|()| {
+                            if macros.is_empty() { Ok(()) } else { via_chunked_write(dev, 0x0F, &macros) }
+                        }),
                         None => Err("keyboard not connected".into()),
                     };
                     let _ = reply.send(r);

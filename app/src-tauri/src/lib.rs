@@ -168,7 +168,7 @@ fn get_state(app: tauri::State<Arc<App>>) -> FullState {
     app.full_state()
 }
 
-fn dump_keymap_blocking(app: &App) -> Result<Vec<u8>, String> {
+fn dump_keymap_blocking(app: &App) -> Result<(Vec<u8>, Vec<u8>), String> {
     let (tx, rx) = std::sync::mpsc::channel();
     app.hid_tx.send(hid::Cmd::DumpKeymap(tx)).map_err(|e| e.to_string())?;
     rx.recv_timeout(Duration::from_secs(10)).map_err(|e| e.to_string())?
@@ -185,14 +185,23 @@ fn backup_path(app: &App) -> PathBuf {
         .join(format!("keymap-backup-{ts}.bin"))
 }
 
-#[tauri::command]
-fn backup_keymap(app: tauri::State<Arc<App>>) -> Result<String, String> {
-    let data = dump_keymap_blocking(&app)?;
-    let path = backup_path(&app);
+fn write_backup(app: &App, keymap: &[u8], macros: &[u8]) -> Result<PathBuf, String> {
+    let path = backup_path(app);
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    std::fs::write(&path, &data).map_err(|e| e.to_string())?;
+    std::fs::write(&path, keymap).map_err(|e| e.to_string())?;
+    if !macros.is_empty() {
+        let mp = path.with_extension("macros.bin");
+        std::fs::write(mp, macros).map_err(|e| e.to_string())?;
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+fn backup_keymap(app: tauri::State<Arc<App>>) -> Result<String, String> {
+    let (keymap, macros) = dump_keymap_blocking(&app)?;
+    let path = write_backup(&app, &keymap, &macros)?;
     Ok(path.display().to_string())
 }
 
@@ -214,17 +223,15 @@ fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resu
         let fail = |msg: String| {
             let _ = handle.emit("pro-progress", format!("❌ {msg}"));
         };
-        emit("① 备份键位…");
+        emit("① 备份键位与宏…");
         let backup = match dump_keymap_blocking(&app) {
             Ok(d) => {
-                let p = backup_path(&app);
-                let _ = p.parent().map(std::fs::create_dir_all);
-                if std::fs::write(&p, &d).is_err() {
-                    return fail("键位备份写盘失败,中止".into());
+                if write_backup(&app, &d.0, &d.1).is_err() {
+                    return fail("备份写盘失败,中止".into());
                 }
                 d
             }
-            Err(e) => return fail(format!("键位备份失败,中止:{e}")),
+            Err(e) => return fail(format!("备份失败,中止:{e}")),
         };
         emit("② 进入 bootloader…");
         let _ = app.hid_tx.send(hid::Cmd::BootloaderJump);
