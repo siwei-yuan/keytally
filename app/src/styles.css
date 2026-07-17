@@ -113,6 +113,13 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 .settings input, .settings select {
   background: #16171b; border: 1px solid var(--hairline); border-radius: 2px;
   color: var(--text); padding: 6px 9px; width: 150px; font: inherit; font-family: var(--mono);
+  appearance: none; -webkit-appearance: none;
+}
+.settings select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='8' height='5'><path d='M0 0 L4 5 L8 0' fill='%238e8c86'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+  padding-right: 24px;
 }
 .settings input:focus, .settings select:focus { outline: none; border-color: var(--accent); }
 .settings input[type="color"] { width: 52px; height: 28px; padding: 2px; }

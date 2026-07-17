@@ -496,8 +496,11 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
     use tauri::menu::{Menu, MenuItem};
     use tauri::tray::TrayIconBuilder;
 
-    let show = MenuItem::with_id(app, "show", "打开面板", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let zh = sys_locale::get_locale()
+        .map(|l| l.to_lowercase().starts_with("zh"))
+        .unwrap_or(false);
+    let show = MenuItem::with_id(app, "show", if zh { "打开面板" } else { "Open Panel" }, true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", if zh { "退出" } else { "Quit" }, true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show, &quit])?;
     TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())

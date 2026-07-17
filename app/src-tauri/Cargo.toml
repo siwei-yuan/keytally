@@ -19,3 +19,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 collector = { path = "../../collector" }
 hidapi = "2"
+sys-locale = "0.3"
