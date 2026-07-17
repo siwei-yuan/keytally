@@ -128,3 +128,4 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 #pro-status { color: var(--muted); font-size: 12px; flex: 1; }
 #pro-progress { color: var(--accent); font-size: 12px; font-family: var(--mono); min-height: 16px; }
 .pro button:disabled { opacity: 0.35; cursor: default; }
+.pro button.armed { border-color: #d0342c; color: #d0342c; }

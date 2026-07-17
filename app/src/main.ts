@@ -230,11 +230,27 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
+  // Tauri WebView 不支持原生 confirm(),用按钮二次确认
+  let upgradeArmed: number | null = null;
   $("#upgrade-pro").addEventListener("click", async () => {
-    const yes = confirm(
-      "将刷入 Pro 固件(自动备份并恢复 VIA 键位)。\n过程约 1 分钟,期间键盘会短暂失灵,勿拔线。\n继续?"
-    );
-    if (!yes) return;
+    const btn = $<HTMLButtonElement>("#upgrade-pro");
+    if (upgradeArmed === null) {
+      btn.textContent = "再点一次确认刷入";
+      btn.classList.add("armed");
+      $("#pro-progress").textContent =
+        "确认后自动:备份键位 → 进 DFU → 刷入 → 恢复键位;约 1 分钟,期间键盘短暂失灵,勿拔线。";
+      upgradeArmed = window.setTimeout(() => {
+        upgradeArmed = null;
+        btn.textContent = "升级到 Pro";
+        btn.classList.remove("armed");
+        $("#pro-progress").textContent = "";
+      }, 6000);
+      return;
+    }
+    clearTimeout(upgradeArmed);
+    upgradeArmed = null;
+    btn.textContent = "升级到 Pro";
+    btn.classList.remove("armed");
     try {
       await invoke("upgrade_to_pro");
     } catch (e) {
