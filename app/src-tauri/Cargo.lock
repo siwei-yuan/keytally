@@ -472,6 +472,7 @@ name = "collector"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "hidapi",
  "serde",
  "serde_json",
  "ureq",

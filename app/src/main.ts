@@ -3,7 +3,9 @@ import { listen } from "@tauri-apps/api/event";
 import {
   ACCENTS,
   computeLeds,
+  computeViaLook,
   renderKeyboard,
+  renderUniversal,
   type Snapshot,
   type SourceUsage,
 } from "./keyboard";
@@ -13,6 +15,7 @@ interface KbState {
   source: number;
   connected: boolean;
   device_name: string | null;
+  backend: string | null;
 }
 
 interface AppConfig {
@@ -46,8 +49,9 @@ function render() {
 
   const dot = $("#conn-dot");
   dot.className = `dot ${kb.connected ? "on" : "off"}`;
+  const backendLabel = kb.backend === "pro" ? "Pro 固件·逐灯" : "VIA 通用·整板同色";
   $("#conn-text").textContent = kb.connected
-    ? `已连接:${kb.device_name ?? "QMK 键盘"}`
+    ? `已连接:${kb.device_name ?? "QMK 键盘"}(${backendLabel})`
     : "未连接键盘(预览仍实时)";
 
   for (const btn of document.querySelectorAll<HTMLButtonElement>("#source-seg button")) {
@@ -58,11 +62,12 @@ function render() {
   }
 
   const budget = kb.source === 0 ? config.claude_daily_budget : config.codex_daily_budget;
-  renderKeyboard(
-    $("#preview"),
-    computeLeds(snapshot, kb.mode, kb.source, budget),
-    ACCENTS[kb.source] ?? ACCENTS[0]
-  );
+  const accent = ACCENTS[kb.source] ?? ACCENTS[0];
+  if (kb.backend === "pro") {
+    renderKeyboard($("#preview"), computeLeds(snapshot, kb.mode, kb.source, budget), accent);
+  } else {
+    renderUniversal($("#preview"), computeViaLook(snapshot, kb.mode, kb.source, budget), accent);
+  }
 
   const u: SourceUsage = kb.source === 0 ? snapshot.claude : snapshot.codex;
   const todayPct = budget > 0 ? Math.min(100, Math.round((u.today_tokens * 100) / budget)) : null;
@@ -118,7 +123,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         claude: { valid: true, five_hour_pct: 63, weekly_pct: 17, today_tokens: 2_615_737, active: true },
         codex: { valid: true, five_hour_pct: null, weekly_pct: 1, today_tokens: 0, active: false },
       },
-      kb: { mode: 0, source: 0, connected: false, device_name: null },
+      kb: { mode: 0, source: 0, connected: false, device_name: null, backend: null },
       config: { claude_daily_budget: 5_000_000, codex_daily_budget: 5_000_000 },
     };
   }

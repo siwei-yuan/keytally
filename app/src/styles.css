@@ -59,13 +59,16 @@ header {
   font-family: inherit;
   pointer-events: none;
 }
-#preview circle.breathing {
+#preview circle.breathing,
+#preview rect.uni.breathing {
   animation: breathe 2.2s ease-in-out infinite;
 }
-#preview circle.blink-warn {
+#preview circle.blink-warn,
+#preview rect.uni.blink-warn {
   animation: blink-warn 1s step-end infinite;
 }
-#preview circle.passthrough {
+#preview circle.passthrough,
+#preview rect.uni.passthrough {
   animation: hue-cycle 6s linear infinite;
 }
 @keyframes breathe {

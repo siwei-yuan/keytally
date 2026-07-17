@@ -31,6 +31,54 @@ pub struct KbState {
     pub source: u8,
     pub connected: bool,
     pub device_name: Option<String>,
+    /// "pro" = 本项目固件(逐灯);"via" = 通用 VIA 键盘(整板同色)
+    pub backend: Option<String>,
+}
+
+// 数据源指示色的 QMK HSV(Claude #D97757 / Codex #10A37F)
+const ACCENT_HSV: [(u8, u8); 2] = [(13, 153), (117, 230)];
+
+/// 与 app 预览、Pro 固件一致的映射:模式+数据源 → 整板颜色
+fn compute_via_look(snap: &Snapshot, kb: &KbState, cfg: &AppConfig) -> hid::ViaLook {
+    let (u, budget) = if kb.source == 0 {
+        (&snap.claude, cfg.claude_daily_budget)
+    } else {
+        (&snap.codex, cfg.codex_daily_budget)
+    };
+    let accent = ACCENT_HSV[kb.source.min(1) as usize];
+    let passthrough = hid::ViaLook { passthrough: true, ..Default::default() };
+    if !u.valid {
+        return passthrough;
+    }
+    // 0-100 → 绿(hue 85)→红(hue 0)
+    let grade = |pct: u8| hid::ViaLook {
+        hue: (85u16 * (100 - pct.min(100) as u16) / 100) as u8,
+        sat: 255,
+        ..Default::default()
+    };
+    match kb.mode {
+        0 => match u.five_hour_pct.or(u.weekly_pct) {
+            Some(pct) => hid::ViaLook {
+                blink_warn: u.weekly_pct.is_some_and(|w| w >= 80),
+                ..grade(pct)
+            },
+            None => passthrough,
+        },
+        1 => {
+            if budget == 0 {
+                return passthrough;
+            }
+            let pct = ((u.today_tokens.saturating_mul(100)) / budget).min(100) as u8;
+            grade(pct)
+        }
+        _ => {
+            if u.active {
+                hid::ViaLook { hue: accent.0, sat: accent.1, breathing: true, ..Default::default() }
+            } else {
+                passthrough
+            }
+        }
+    }
 }
 
 #[derive(Default)]
@@ -65,14 +113,17 @@ impl App {
         }
     }
 
-    fn push_data_packet(&self) {
+    fn push_frame(&self) {
         let sh = self.shared.lock().unwrap();
-        let p = packet::build_data_packet(
-            &sh.snapshot,
-            sh.config.claude_daily_budget,
-            sh.config.codex_daily_budget,
-        );
-        let _ = self.hid_tx.send(hid::Cmd::Send(p));
+        let frame = hid::Frame {
+            pro: packet::build_data_packet(
+                &sh.snapshot,
+                sh.config.claude_daily_budget,
+                sh.config.codex_daily_budget,
+            ),
+            via: compute_via_look(&sh.snapshot, &sh.kb, &sh.config),
+        };
+        let _ = self.hid_tx.send(hid::Cmd::Frame(frame));
     }
 }
 
@@ -83,15 +134,18 @@ fn get_state(app: tauri::State<Arc<App>>) -> FullState {
 
 #[tauri::command]
 fn set_kb_state(app: tauri::State<Arc<App>>, mode: Option<u8>, source: Option<u8>) {
+    {
+        let mut sh = app.shared.lock().unwrap();
+        if let Some(m) = mode {
+            sh.kb.mode = m;
+        }
+        if let Some(s) = source {
+            sh.kb.source = s;
+        }
+    }
+    // Pro 固件持有自己的状态,同步过去(VIA 后端忽略);随后推新灯效帧
     let _ = app.hid_tx.send(hid::Cmd::SetState { mode, source });
-    // 键盘断开时也更新本地状态,预览仍可用;连着时固件回报会再覆盖一次
-    let mut sh = app.shared.lock().unwrap();
-    if let Some(m) = mode {
-        sh.kb.mode = m;
-    }
-    if let Some(s) = source {
-        sh.kb.source = s;
-    }
+    app.push_frame();
 }
 
 #[tauri::command]
@@ -107,7 +161,7 @@ fn set_config(app: tauri::State<Arc<App>>, handle: tauri::AppHandle, config: App
         &app.config_path,
         serde_json::to_vec_pretty(&config).unwrap(),
     );
-    app.push_data_packet();
+    app.push_frame();
     let _ = handle.emit("state", app.full_state());
 }
 
@@ -157,7 +211,7 @@ fn spawn_collector(handle: tauri::AppHandle, app: Arc<App>) {
                     changed
                 };
                 if changed {
-                    app.push_data_packet();
+                    app.push_frame();
                     let _ = handle.emit("state", app.full_state());
                 }
                 std::thread::sleep(Duration::from_secs(2));
@@ -201,7 +255,14 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
                     let _ = w.set_focus();
                 }
             }
-            "quit" => handle.exit(0),
+            "quit" => {
+                // 先让 HID 线程恢复键盘原灯效再退出
+                if let Some(app) = handle.try_state::<Arc<App>>() {
+                    let _ = app.hid_tx.send(hid::Cmd::Shutdown);
+                }
+                std::thread::sleep(Duration::from_millis(400));
+                handle.exit(0);
+            }
             _ => {}
         })
         .build(app)?;
@@ -238,11 +299,15 @@ pub fn run() {
                     {
                         let mut sh = app.shared.lock().unwrap();
                         match ev {
-                            hid::Event::Connected(name) => {
+                            hid::Event::Connected { name, backend } => {
                                 sh.kb.connected = true;
                                 sh.kb.device_name = name;
+                                sh.kb.backend = Some(backend.to_string());
                             }
-                            hid::Event::Disconnected => sh.kb.connected = false,
+                            hid::Event::Disconnected => {
+                                sh.kb.connected = false;
+                                sh.kb.backend = None;
+                            }
                             hid::Event::State(m, s) => {
                                 sh.kb.mode = m;
                                 sh.kb.source = s;

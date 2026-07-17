@@ -68,6 +68,36 @@ export function computeLeds(snap: Snapshot, mode: number, source: number, budget
   return { leds: Array(6).fill(OFF), breathing: false, blinkAccent: false, passthrough: true };
 }
 
+// ---- 通用 VIA 模式(整板同色,与 src-tauri compute_via_look 同一套映射) ----
+
+export interface ViaLook {
+  color: string | null; // null = passthrough(显示用户自己的灯效)
+  blinkWarn: boolean;
+  breathing: boolean;
+}
+
+export function computeViaLook(snap: Snapshot, mode: number, source: number, budget: number): ViaLook {
+  const u = source === 0 ? snap.claude : snap.codex;
+  const accent = ACCENTS[source] ?? ACCENTS[0];
+  const pass: ViaLook = { color: null, blinkWarn: false, breathing: false };
+  if (!u.valid) return pass;
+  if (mode === 0) {
+    const pct = u.five_hour_pct ?? u.weekly_pct;
+    if (pct === null) return pass;
+    return {
+      color: gradeColor(pct),
+      blinkWarn: u.weekly_pct !== null && u.weekly_pct >= WEEKLY_WARN_PCT,
+      breathing: false,
+    };
+  }
+  if (mode === 1) {
+    if (budget <= 0) return pass;
+    const pct = Math.min(100, (u.today_tokens * 100) / budget);
+    return { color: gradeColor(pct), blinkWarn: false, breathing: false };
+  }
+  return u.active ? { color: accent, blinkWarn: false, breathing: true } : pass;
+}
+
 // ---- 绘制 ----
 
 interface Key {
@@ -99,6 +129,21 @@ const U = 40;
 const GAP = 4;
 const BADGE_X = 15; // 右侧挡块(徽章)位置
 const BADGE_Y = 2;
+
+/// 通用模式:整板一个颜色(所有键帽/灯带同色)
+export function renderUniversal(el: HTMLElement, look: ViaLook, accent: string) {
+  const w = 16 * U;
+  const h = 5 * U;
+  const cls = [look.breathing ? "breathing" : "", look.blinkWarn ? "blink-warn" : "", look.color === null ? "passthrough" : ""].join(" ");
+  const fill = look.color ?? "#3a3f48";
+  const keyRects = KEYS.map((k) => {
+    const label = k.label
+      ? `<text x="${(k.x + k.w / 2) * U}" y="${(k.y + 0.58) * U}" text-anchor="middle">${k.label}</text>`
+      : "";
+    return `<g><rect class="uni ${cls}" x="${k.x * U + GAP / 2}" y="${k.y * U + GAP / 2}" width="${k.w * U - GAP}" height="${U - GAP}" rx="5" fill="${fill}"/>${label}</g>`;
+  }).join("");
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="--accent:${accent}">${keyRects}</svg>`;
+}
 
 export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string) {
   const w = 16 * U;
