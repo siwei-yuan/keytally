@@ -81,8 +81,8 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 
 .settings { border-top: 1px solid var(--hairline); padding-top: 12px; color: var(--muted); }
 .settings summary { cursor: pointer; letter-spacing: 3px; font-size: 10px; text-transform: uppercase; list-style: none; }
-.settings summary::before { content: "▸ "; color: var(--accent); }
-.settings[open] summary::before { content: "▾ "; }
+.settings summary::before { content: "▸"; color: var(--accent); font-size: 16px; margin-right: 8px; vertical-align: -2px; }
+.settings[open] summary::before { content: "▾"; }
 .settings label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 12px 0; color: var(--text); font-size: 12px; }
 .settings input, .settings select {
   background: #16171b; border: 1px solid var(--hairline); border-radius: 2px;
