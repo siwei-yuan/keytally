@@ -149,6 +149,7 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
   color: var(--text); padding: 5px 12px; font: inherit; font-size: 12px; cursor: pointer;
 }
 #led-panel button:hover { border-color: var(--accent); color: var(--accent); }
+#led-panel button.active { background: var(--accent); border-color: var(--accent); color: #0f1013; font-weight: 600; }
 #led-panel-info { color: var(--muted); font-family: var(--mono); }
 .drag-box {
   position: fixed; border: 1px dashed var(--accent); background: #e8641b18;

@@ -65,6 +65,11 @@ function renderLedPanel() {
   const names = ["不参与", "进度条", "源指示"];
   const summary = [...ledSel].sort((a, b) => a - b).map((i) => `${i + 1}(${names[roles[i] ?? 0]})`).join(" ");
   $("#led-panel-info").textContent = `已选 ${ledSel.size} 颗灯:${summary} → 设为:`;
+  // 选区内所有灯职责一致时,高亮对应按钮
+  const uniform = [...ledSel].every((i) => roles[i] === roles[[...ledSel][0]]) ? roles[[...ledSel][0]] : null;
+  panel.querySelectorAll<HTMLButtonElement>("button[data-role]").forEach((b) => {
+    b.classList.toggle("active", uniform !== null && Number(b.dataset.role) === uniform);
+  });
 }
 
 const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -322,7 +327,7 @@ window.addEventListener("DOMContentLoaded", async () => {
       ledSel.forEach((i) => (roles[i] = role));
       (state.config as unknown as { led_roles: Record<string, number[]> }).led_roles ??= {};
       (state.config as unknown as { led_roles: Record<string, number[]> }).led_roles[boardKey(state.kb)] = roles;
-      ledSel.clear();
+      // 保留选区:按钮高亮 + 摘要更新就是保存成功的确认
       invoke("set_led_roles", { roles });
     }
     render();
