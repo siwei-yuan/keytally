@@ -16,8 +16,15 @@ build.sh     编译 / 刷机脚本
 ./build.sh flash    # 编译并刷机(需先按 PCB 背面 reset 键进 DFU 模式)
 ```
 
-依赖:`brew install qmk/qmk/qmk`(需 trust qmk/qmk、osx-cross/arm、osx-cross/avr
-三个官方 tap)+ `~/qmk_firmware` 检出。
+依赖(一次性):
+
+```sh
+brew tap osx-cross/arm && brew tap osx-cross/avr
+brew trust qmk/qmk && brew trust osx-cross/arm && brew trust osx-cross/avr   # 新版 brew 需要
+brew install qmk/qmk/qmk
+git clone --depth 1 --recurse-submodules --shallow-submodules https://github.com/qmk/qmk_firmware ~/qmk_firmware
+qmk config user.qmk_home=$HOME/qmk_firmware
+```
 
 ## 灯效方案(6 灯)
 

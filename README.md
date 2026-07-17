@@ -55,7 +55,11 @@ Safety first: all universal-mode writes are volatile (never saved to EEPROM) —
 
 ## Install
 
-Prebuilt releases are planned; for now, build from source (macOS, Apple Silicon):
+### Download (macOS, Apple Silicon)
+
+Grab the `.dmg` from [**Releases**](https://github.com/siwei-yuan/keytally/releases). The build is unsigned for now — on first launch, right-click the app → **Open** (or `xattr -dr com.apple.quarantine /Applications/KeyTally.app`).
+
+### Build from source
 
 ```sh
 # prerequisites: Rust (rustup.rs) and Node 20+
@@ -67,8 +71,8 @@ npm run tauri build        # or: npm run tauri dev
 
 The app lives in your menu bar. Optional extras:
 
-- **Pro firmware builds** need the QMK toolchain: `brew install qmk/qmk/qmk`, then `./firmware/build.sh`
-- **Event-precise activity detection** hooks into Claude Code (`~/.claude/settings.json` hooks) and Codex (`notify` in `~/.codex/config.toml`) — see [hooks/](hooks/). Without them the app falls back to watching session-log timestamps.
+- **Pro firmware builds** need the QMK toolchain and a QMK checkout — see [firmware/README.md](firmware/README.md)
+- **Event-precise activity detection** hooks into Claude Code and Codex — setup snippets in [hooks/README.md](hooks/README.md). Without them the app falls back to watching session-log timestamps.
 
 ## Quick start
 
@@ -117,6 +121,8 @@ Roles persist per keyboard and re-apply on every connect.
 **Will Pro flashing lose my keymap?** No. Keymap and macros are dumped before flashing and restored after. VIA keeps working on the Pro firmware (our protocol rides command IDs VIA ignores).
 
 **Bluetooth?** No — Raw HID requires a wired USB connection.
+
+**What credentials does it touch?** KeyTally reads the Claude Code OAuth token from your macOS Keychain to call Anthropic's own usage endpoint (the same one `/usage` uses) — it refreshes and writes back in the exact format Claude Code expects, and nothing is sent anywhere else. Codex data comes purely from local session logs.
 
 **Windows/Linux?** The collectors and HID layer are portable Rust; only macOS-specific bits are the Keychain reader and hook paths. PRs welcome.
 

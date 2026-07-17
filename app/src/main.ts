@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LED_DB } from "./led-db";
+import { applyStaticEn, t, trProgress } from "./i18n";
 import {
   ACCENTS,
   applyCustom,
@@ -66,9 +67,9 @@ function renderLedPanel() {
   }
   panel.hidden = false;
   const roles = currentRoles();
-  const names = ["不参与", "进度条", "源指示"];
+  const names = [t("不参与", "none"), t("进度条", "bar"), t("源指示", "indicator")];
   const summary = [...ledSel].sort((a, b) => a - b).map((i) => `${i + 1}(${names[roles[i] ?? 0]})`).join(" ");
-  $("#led-panel-info").textContent = `已选 ${ledSel.size} 颗灯:${summary} → 设为:`;
+  $("#led-panel-info").textContent = t(`已选 ${ledSel.size} 颗灯:${summary} → 设为:`, `${ledSel.size} LED(s) selected: ${summary} → set as:`);
   // 选区内所有灯职责一致时,高亮对应按钮
   const uniform = [...ledSel].every((i) => roles[i] === roles[[...ledSel][0]]) ? roles[[...ledSel][0]] : null;
   panel.querySelectorAll<HTMLButtonElement>("button[data-role]").forEach((b) => {
@@ -127,23 +128,23 @@ function render() {
   const legend = $(".legend");
   if (kb.backend === "pro") {
     legend.innerHTML = `
-      <span><i class="chip" style="background:${ACCENTS[kb.source] ?? ACCENTS[0]}"></i>第 1 颗 = 数据源指示(额度模式下周限额超阈值时闪红)</span>
-      <span><i class="chip grad"></i>第 2-6 颗 = 进度条:额度=5h 用量渐变 / 今日消耗=源色填充 / 活动=整组呼吸</span>`;
+      <span><i class="chip" style="background:${ACCENTS[kb.source] ?? ACCENTS[0]}"></i>${t("指示灯 = 数据源(额度模式下周限额超阈值时闪红)", "Indicator LED = source (blinks red past weekly threshold in quota mode)")}</span>
+      <span><i class="chip grad"></i>${t("进度条灯:额度=5h 用量渐变 / 今日消耗=源色填充 / 活动=整组呼吸", "Bar LEDs: quota=green→red / today=source color fill / activity=breathe")}</span>`;
   } else {
     legend.innerHTML = `
-      <span><i class="chip grad"></i>灯色 = 用量 0→100%</span>
-      <span><i class="chip" style="background:#e8641b"></i>活动中 = 亮这个颜色</span>
-      <span><i class="chip warn"></i>红闪 = 周限额超阈值</span>`;
+      <span><i class="chip grad"></i>${t("灯色 = 用量 0→100%", "Light color = usage 0→100%")}</span>
+      <span><i class="chip" style="background:#e8641b"></i>${t("活动中 = 亮这个颜色", "Active = glows this color")}</span>
+      <span><i class="chip warn"></i>${t("红闪 = 周限额超阈值", "Red blink = weekly limit past threshold")}</span>`;
   }
   const backendLabel =
     kb.backend === "pro"
-      ? "Pro 固件·逐灯"
+      ? t("Pro 固件·逐灯", "Pro firmware · per-LED")
       : kb.lighting === "rgb_matrix"
-        ? "VIA 通用·整板同色"
-        : "VIA 通用·灯带同色";
+        ? t("VIA 通用·整板同色", "Universal VIA · whole-board")
+        : t("VIA 通用·灯带同色", "Universal VIA · light strip");
   $("#conn-text").textContent = kb.connected
-    ? `已连接:${kb.device_name ?? "QMK 键盘"}(${backendLabel})`
-    : "未连接键盘(预览仍实时)";
+    ? t(`已连接:${kb.device_name ?? "QMK 键盘"}(${backendLabel})`, `Connected: ${kb.device_name ?? "QMK keyboard"} (${backendLabel})`)
+    : t("未连接键盘(预览仍实时)", "No keyboard connected (preview stays live)");
 
   for (const btn of document.querySelectorAll<HTMLButtonElement>("#source-seg button")) {
     btn.classList.toggle("active", Number(btn.dataset.source) === kb.source);
@@ -177,10 +178,10 @@ function render() {
   const u: SourceUsage = kb.source === 0 ? snapshot.claude : snapshot.codex;
   const todayPct = budget > 0 ? (u.today_tokens * 100) / budget : null;
   $("#stats").innerHTML = `
-    <div class="stat"><span class="k">5 小时窗口</span><span class="v">${fmtPct(u.five_hour_pct)}</span></div>
-    <div class="stat"><span class="k">周限额</span><span class="v">${fmtPct(u.weekly_pct)}</span></div>
-    <div class="stat"><span class="k">今日消耗 (tokens)</span><span class="v">${fmtTokens(u.today_tokens)}${todayPct === null ? "" : gaugeHtml(todayPct)}</span></div>
-    <div class="stat"><span class="k">状态</span><span class="v">${u.valid ? (u.active ? "🔥干活中" : "空闲") : "未安装"}</span></div>`;
+    <div class="stat"><span class="k">${t("5 小时窗口", "5-hour window")}</span><span class="v">${fmtPct(u.five_hour_pct)}</span></div>
+    <div class="stat"><span class="k">${t("周限额", "Weekly limit")}</span><span class="v">${fmtPct(u.weekly_pct)}</span></div>
+    <div class="stat"><span class="k">${t("今日消耗 (tokens)", "Today (tokens)")}</span><span class="v">${fmtTokens(u.today_tokens)}${todayPct === null ? "" : gaugeHtml(todayPct)}</span></div>
+    <div class="stat"><span class="k">${t("状态", "Status")}</span><span class="v">${u.valid ? (u.active ? t("🔥干活中", "🔥Working") : t("空闲", "Idle")) : t("未安装", "Not installed")}</span></div>`;
 }
 
 const PRO_BOARDS = new Set(["4753:4003"]); // 已适配 Pro 固件的板子(开源后社区扩充)
@@ -194,17 +195,17 @@ function renderPro() {
   const restoreBtn = $<HTMLButtonElement>("#restore-stock");
   restoreBtn.disabled = !(kb.connected && kb.backend === "pro");
   if (!kb.connected) {
-    statusEl.textContent = "键盘未连接";
+    statusEl.textContent = t("键盘未连接", "No keyboard connected");
     btn.disabled = true;
   } else if (kb.backend === "pro") {
-    statusEl.textContent = "✅ 键盘已运行 Pro 固件";
+    statusEl.textContent = t("✅ 键盘已运行 Pro 固件", "✅ Keyboard is running Pro firmware");
     btn.disabled = !PRO_BOARDS.has(key);
-    $("#upgrade-label").textContent = "更新 Pro 固件";
+    $("#upgrade-label").textContent = t("更新 Pro 固件", "Update Pro firmware");
   } else if (PRO_BOARDS.has(key)) {
-    statusEl.textContent = "本键盘已有可刷的 Pro 固件";
+    statusEl.textContent = t("本键盘已有可刷的 Pro 固件", "Pro firmware available for this board");
     btn.disabled = false;
   } else {
-    statusEl.textContent = "该型号暂无 Pro 固件(需社区适配)";
+    statusEl.textContent = t("该型号暂无 Pro 固件(需社区适配)", "No Pro firmware for this model yet (community adaptation welcome)");
     btn.disabled = true;
   }
 }
@@ -220,6 +221,7 @@ function fillSettings() {
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
+  applyStaticEn();
   $("#source-seg").addEventListener("click", (e) => {
     const btn = (e.target as HTMLElement).closest("button");
     if (!btn || !state) return;
@@ -257,7 +259,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     });
     state = await invoke<FullState>("get_state");
     await listen<string>("pro-progress", (e) => {
-      $("#pro-progress").textContent = e.payload;
+      $("#pro-progress").textContent = trProgress(e.payload);
     });
   } catch {
     // 非 Tauri 环境(纯浏览器调 UI)→ 演示数据
@@ -267,10 +269,13 @@ window.addEventListener("DOMContentLoaded", async () => {
         codex: { valid: true, five_hour_pct: null, weekly_pct: 1, today_tokens: 0, active: false },
       },
       kb: {
-        mode: 0, source: 0, connected: false, device_name: null,
-        // 浏览器调试:?pro 强制逐灯编辑模式
+        mode: 0, source: 0,
+        // 浏览器调试:?pro 模拟已连接的 Pro 状态(用于截图/UI 调试)
+        connected: location.search.includes("pro"),
+        device_name: location.search.includes("pro") ? "think65v3" : null,
         backend: location.search.includes("pro") ? "pro" : null,
-        lighting: null, vid: 0x4753, pid: 0x4003,
+        lighting: location.search.includes("pro") ? "per-led" : null,
+        vid: 0x4753, pid: 0x4003,
       },
       config: { claude_daily_budget: 5_000_000, codex_daily_budget: 5_000_000, warn_threshold: 80, quota_metric: 0, claude_color: "#D97757", codex_color: "#10A37F" },
     };
@@ -278,6 +283,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   render();
   renderPro();
   fillSettings();
+  if (location.search.includes("settings")) $(".settings").setAttribute("open", "");
 
   // ---- 灯位选区编辑(Pro 模式):点选 / 拖拽框选,下方弹出职责面板 ----
   const preview = $("#preview");
@@ -350,9 +356,9 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#backup-keymap").addEventListener("click", async () => {
     try {
       const path = await invoke<string>("backup_keymap");
-      $("#pro-progress").textContent = `键位已备份到 ${path}`;
+      $("#pro-progress").textContent = t(`键位已备份到 ${path}`, `Keymap backed up to ${path}`);
     } catch (e) {
-      $("#pro-progress").textContent = `备份失败:${e}`;
+      $("#pro-progress").textContent = t(`备份失败:${e}`, `Backup failed: ${e}`);
     }
   });
 
@@ -369,13 +375,15 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#upgrade-pro").addEventListener("click", async () => {
     const btn = $<HTMLButtonElement>("#upgrade-pro");
     if (upgradeArmed === null) {
-      $("#upgrade-label").textContent = "再点一次,确认改写键盘固件";
+      $("#upgrade-label").textContent = t("再点一次,确认改写键盘固件", "Click again to confirm firmware rewrite");
       btn.classList.add("armed");
-      $("#pro-progress").textContent =
-        "将改写键盘固件:备份键位/宏 → 进 DFU → 刷入 → 写回;约 1 分钟,期间键盘短暂失灵,勿拔线。";
+      $("#pro-progress").textContent = t(
+        "将改写键盘固件:备份键位/宏 → 进 DFU → 刷入 → 写回;约 1 分钟,期间键盘短暂失灵,勿拔线。",
+        "This rewrites the keyboard firmware: backup keymap/macros → DFU → flash → restore. ~1 min; keyboard goes dark briefly — don't unplug."
+      );
       upgradeArmed = window.setTimeout(() => {
         upgradeArmed = null;
-        $("#upgrade-label").textContent = state?.kb.backend === "pro" ? "更新 Pro 固件" : "刷入 Pro 固件";
+        $("#upgrade-label").textContent = state?.kb.backend === "pro" ? t("更新 Pro 固件", "Update Pro firmware") : t("刷入 Pro 固件", "Flash Pro firmware");
         btn.classList.remove("armed");
         $("#pro-progress").textContent = "";
       }, 6000);
@@ -383,7 +391,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
     clearTimeout(upgradeArmed);
     upgradeArmed = null;
-    $("#upgrade-label").textContent = state?.kb.backend === "pro" ? "更新 Pro 固件" : "刷入 Pro 固件";
+    $("#upgrade-label").textContent = state?.kb.backend === "pro" ? t("更新 Pro 固件", "Update Pro firmware") : t("刷入 Pro 固件", "Flash Pro firmware");
     btn.classList.remove("armed");
     try {
       await invoke("upgrade_to_pro");
