@@ -48,14 +48,32 @@ function fmtPct(p: number | null): string {
   return p === null ? "--" : `${p}%`;
 }
 
-// 迷你仪表条:填充 = 百分比,超 100% 整条变红
+// 车速表式半圆仪表盘:0 → 100%,指针指示,超 100% 整弧变红
 function gaugeSvg(pct: number): string {
-  const clamped = Math.min(pct, 100);
+  const frac = Math.min(pct, 100) / 100;
   const over = pct >= 100;
-  const color = over ? "#d0342c" : `hsl(${(120 * (1 - clamped / 100)).toFixed(0)}, 72%, 46%)`;
-  return `<svg class="gauge" viewBox="0 0 44 12" width="44" height="12" role="img">
-    <rect x="0.5" y="1" width="43" height="10" rx="2.5" fill="#16171b" stroke="#ffffff3a"/>
-    <rect x="1.5" y="2" width="${(41 * clamped) / 100}" height="8" rx="1.5" fill="${color}"/>
+  const color = over ? "#d0342c" : `hsl(${(120 * (1 - frac)).toFixed(0)}, 72%, 46%)`;
+  const cx = 15, cy = 14, r = 12;
+  const arcLen = Math.PI * r;
+  // 指针角度:0% 指左,100% 指右
+  const t = Math.PI * frac;
+  const nx = cx - 8.5 * Math.cos(t), ny = cy - 8.5 * Math.sin(t);
+  // 刻度:0/25/50/75/100
+  const ticks = [0, 0.25, 0.5, 0.75, 1]
+    .map((f) => {
+      const a = Math.PI * f;
+      const x1 = cx - (r - 2) * Math.cos(a), y1 = cy - (r - 2) * Math.sin(a);
+      const x2 = cx - r * Math.cos(a), y2 = cy - r * Math.sin(a);
+      return `<line x1="${x1.toFixed(1)}" y1="${y1.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="#ffffff45" stroke-width="1"/>`;
+    })
+    .join("");
+  return `<svg class="gauge" viewBox="0 0 30 17" width="36" height="20" role="img">
+    <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="#25262b" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round"
+      stroke-dasharray="${(arcLen * frac).toFixed(1)} ${arcLen.toFixed(1)}"/>
+    ${ticks}
+    <line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="#e8e6e1" stroke-width="1.5" stroke-linecap="round"/>
+    <circle cx="${cx}" cy="${cy}" r="1.8" fill="#e8e6e1"/>
   </svg>`;
 }
 
