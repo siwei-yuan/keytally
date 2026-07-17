@@ -62,17 +62,24 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 .legend .warn { background: #d0342c; animation: blink-warn-bg 1s step-end infinite; }
 @keyframes blink-warn-bg { 50% { background: #3a3d44; } }
 
-.controls { display: flex; gap: 36px; flex-wrap: wrap; }
-.ctl { display: flex; flex-direction: column; gap: 8px; }
-.sec-label { color: var(--muted); font-size: 10px; letter-spacing: 3px; text-transform: uppercase; }
-.seg { display: flex; gap: 4px; }
-.seg button {
-  border: none; border-bottom: 2px solid transparent; background: transparent;
-  color: var(--muted); padding: 6px 12px; font: inherit; font-size: 13px;
-  letter-spacing: 1px; cursor: pointer; transition: color 0.15s;
+.controls { display: flex; gap: 14px; flex-wrap: wrap; }
+.ctl {
+  display: flex; flex-direction: column; gap: 9px;
+  border: 1px solid var(--hairline); border-radius: 3px;
+  padding: 9px 12px 12px;
 }
-.seg button:hover { color: var(--text); }
-.seg button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.sec-label { color: var(--muted); font-size: 10px; letter-spacing: 3px; text-transform: uppercase; }
+.seg { display: flex; gap: 6px; }
+.seg button {
+  border: 1px solid var(--hairline); border-radius: 2px; background: #16171b;
+  color: var(--muted); padding: 6px 14px; font: inherit; font-size: 13px;
+  letter-spacing: 1px; cursor: pointer; transition: color 0.15s, background 0.15s;
+}
+.seg button:hover { color: var(--text); border-color: #ffffff45; }
+.seg button.active {
+  background: var(--accent); border-color: var(--accent);
+  color: #0f1013; font-weight: 600;
+}
 
 .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
 .stat { border-top: 1px solid var(--hairline); padding-top: 8px; display: flex; flex-direction: column; gap: 4px; }
