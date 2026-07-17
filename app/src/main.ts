@@ -198,7 +198,8 @@ function renderPro() {
     btn.disabled = true;
   } else if (kb.backend === "pro") {
     statusEl.textContent = "✅ 键盘已运行 Pro 固件";
-    btn.disabled = true;
+    btn.disabled = !PRO_BOARDS.has(key);
+    btn.textContent = "更新 Pro 固件";
   } else if (PRO_BOARDS.has(key)) {
     statusEl.textContent = "本键盘已有可刷的 Pro 固件";
     btn.disabled = false;
@@ -374,7 +375,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         "将改写键盘固件:备份键位/宏 → 进 DFU → 刷入 → 写回;约 1 分钟,期间键盘短暂失灵,勿拔线。";
       upgradeArmed = window.setTimeout(() => {
         upgradeArmed = null;
-        btn.textContent = "刷入 Pro 固件";
+        btn.textContent = state?.kb.backend === "pro" ? "更新 Pro 固件" : "刷入 Pro 固件";
         btn.classList.remove("armed");
         $("#pro-progress").textContent = "";
       }, 6000);
@@ -382,7 +383,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
     clearTimeout(upgradeArmed);
     upgradeArmed = null;
-    btn.textContent = "刷入 Pro 固件";
+    btn.textContent = state?.kb.backend === "pro" ? "更新 Pro 固件" : "刷入 Pro 固件";
     btn.classList.remove("armed");
     try {
       await invoke("upgrade_to_pro");
