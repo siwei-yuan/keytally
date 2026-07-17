@@ -80,9 +80,13 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 .stat .v { font-size: 22px; font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
 
 .settings { border-top: 1px solid var(--hairline); padding-top: 12px; color: var(--muted); }
-.settings summary { cursor: pointer; letter-spacing: 3px; font-size: 10px; text-transform: uppercase; list-style: none; outline: none; }
+.settings summary {
+  cursor: pointer; letter-spacing: 3px; font-size: 10px; text-transform: uppercase;
+  list-style: none; outline: none;
+  display: flex; align-items: center; gap: 5px;
+}
 .settings summary:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
-.settings summary::before { content: "▸"; color: var(--accent); font-size: 16px; margin-right: 8px; vertical-align: -2px; }
+.settings summary::before { content: "▸"; color: var(--accent); font-size: 21px; line-height: 1; letter-spacing: 0; }
 .settings[open] summary::before { content: "▾"; }
 .settings label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 12px 0; color: var(--text); font-size: 12px; }
 .settings input, .settings select {
