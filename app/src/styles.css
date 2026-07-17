@@ -93,8 +93,18 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
   display: flex; align-items: center; gap: 5px;
 }
 .settings summary:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
-.settings summary::before { content: "▸"; color: var(--accent); font-size: 21px; line-height: 1; letter-spacing: 0; }
-.settings[open] summary::before { content: "▾"; }
+.settings summary::before {
+  content: ""; width: 0; height: 0; flex-shrink: 0;
+  border-left: 8px solid var(--accent);
+  border-top: 5.5px solid transparent;
+  border-bottom: 5.5px solid transparent;
+}
+.settings[open] summary::before {
+  border-left: 5.5px solid transparent;
+  border-right: 5.5px solid transparent;
+  border-top: 8px solid var(--accent);
+  border-bottom: none;
+}
 .settings label { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 12px 0; color: var(--text); font-size: 12px; }
 .settings input, .settings select {
   background: #16171b; border: 1px solid var(--hairline); border-radius: 2px;
