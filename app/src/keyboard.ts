@@ -167,7 +167,7 @@ export function renderUniversal(el: HTMLElement, look: ViaLook, accent: string) 
 }
 
 export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string) {
-  const w = 16 * U;
+  const w = 16 * U + 14; // 右侧留白,容纳 LED 区四角括号
   const h = 5 * U;
 
   const keyRects = KEYS.map((k) => {
