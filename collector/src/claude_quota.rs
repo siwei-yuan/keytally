@@ -15,6 +15,8 @@ pub struct Quota {
 #[derive(Debug)]
 pub enum FetchError {
     Unauthorized,
+    /// 429:附带服务端建议的重试秒数(Retry-After)
+    RateLimited(Option<u64>),
     Other(String),
 }
 
@@ -50,23 +52,28 @@ pub fn fetch(access_token: &str) -> Result<Quota, FetchError> {
             Ok(parse(&v))
         }
         Err(ureq::Error::Status(401 | 403, _)) => Err(FetchError::Unauthorized),
+        Err(ureq::Error::Status(429, resp)) => Err(FetchError::RateLimited(
+            resp.header("retry-after").and_then(|v| v.parse().ok()),
+        )),
         Err(e) => Err(FetchError::Other(e.to_string())),
     }
 }
 
 /// 完整流程:读钥匙串 → 过期先刷新 → 请求;401 再刷新重试一次。
-pub fn get() -> Result<Quota, String> {
-    let mut c = creds::read()?;
+/// Err 为 (错误信息, 建议重试秒数)。
+pub fn get() -> Result<Quota, (String, Option<u64>)> {
+    let mut c = creds::read().map_err(|e| (e, None))?;
     if c.expired() {
-        c = creds::refresh(&c)?;
+        c = creds::refresh(&c).map_err(|e| (e, None))?;
     }
     match fetch(&c.access_token) {
         Ok(q) => Ok(q),
         Err(FetchError::Unauthorized) => {
-            let c = creds::refresh(&c)?;
-            fetch(&c.access_token).map_err(|e| format!("{e:?}"))
+            let c = creds::refresh(&c).map_err(|e| (e, None))?;
+            fetch(&c.access_token).map_err(|e| (format!("{e:?}"), None))
         }
-        Err(FetchError::Other(e)) => Err(e),
+        Err(FetchError::RateLimited(after)) => Err(("usage 接口限流(429)".into(), after)),
+        Err(FetchError::Other(e)) => Err((e, None)),
     }
 }
 

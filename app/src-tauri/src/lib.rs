@@ -466,19 +466,28 @@ fn spawn_collector(handle: tauri::AppHandle, app: Arc<App>) {
         .expect("spawn collector thread");
 }
 
-/// 额度线程:每 60 秒查一次 Claude OAuth usage(网络 + 钥匙串,慢,单独跑)。
+/// 额度线程:平时 2 分钟一查;429 按 Retry-After 或指数退避(封顶 30 分钟)。
 fn spawn_quota(app: Arc<App>) {
     std::thread::Builder::new()
         .name("quota".into())
-        .spawn(move || loop {
-            match claude_quota::get() {
-                Ok(q) => {
-                    let mut sh = app.shared.lock().unwrap();
-                    sh.claude_quota = (q.five_hour_pct, q.weekly_pct);
-                }
-                Err(e) => eprintln!("claude quota unavailable: {e}"),
+        .spawn(move || {
+            let mut backoff = Duration::from_secs(120);
+            loop {
+                let wait = match claude_quota::get() {
+                    Ok(q) => {
+                        let mut sh = app.shared.lock().unwrap();
+                        sh.claude_quota = (q.five_hour_pct, q.weekly_pct);
+                        backoff = Duration::from_secs(120);
+                        backoff
+                    }
+                    Err((e, retry_after)) => {
+                        eprintln!("claude quota unavailable: {e}");
+                        backoff = (backoff * 2).min(Duration::from_secs(1800));
+                        retry_after.map(Duration::from_secs).unwrap_or(backoff)
+                    }
+                };
+                std::thread::sleep(wait);
             }
-            std::thread::sleep(Duration::from_secs(60));
         })
         .expect("spawn quota thread");
 }

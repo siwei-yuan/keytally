@@ -31,7 +31,7 @@ pub fn collect(cfg: &Config) -> Snapshot {
                     claude.five_hour_pct = q.five_hour_pct;
                     claude.weekly_pct = q.weekly_pct;
                 }
-                Err(e) => eprintln!("claude quota unavailable: {e}"),
+                Err((e, _)) => eprintln!("claude quota unavailable: {e}"),
             }
         }
     }
