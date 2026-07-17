@@ -1,78 +1,105 @@
-# Raw HID 协议规范
+# Raw HID protocol
 
-版本:1
+[中文版](protocol.zh-CN.md)
 
-## 传输层
+Version: 1
 
-- QMK Raw HID:usage page `0xFF60`,usage `0x61`,报文固定 **32 字节**。
-- 固件保留 VIA:VIA 协议同走 Raw HID,遇到不认识的命令 ID 会调用
-  `raw_hid_receive_kb()`,本协议的所有命令 ID 选在 `0xC0–0xCF`,VIA 未使用该区间。
-- 所有多字节字段均为单字节,无字节序问题。
+## Transport
 
-## 命令一览
+- QMK Raw HID: usage page `0xFF60`, usage `0x61`, fixed **32-byte** reports.
+- The firmware keeps VIA enabled: VIA shares the same Raw HID endpoint, and unknown
+  command IDs are handed to `via_command_kb()`. All commands in this protocol use
+  IDs in `0xC0–0xCF`, which VIA never uses.
+- All fields are single bytes; no endianness concerns.
 
-| ID     | 方向       | 含义                     |
-|--------|-----------|--------------------------|
-| `0xC0` | app → 键盘 | 推送 usage 数据           |
-| `0xC1` | app → 键盘 | 设置显示状态(模式/数据源)|
-| `0xC1` | 键盘 → app | 状态回报(同一 ID 复用)   |
-| `0xC2` | app → 键盘 | 查询当前状态              |
+## Commands
 
-## 0xC0 usage 数据推送(app → 键盘)
+| ID     | Direction      | Meaning                          |
+|--------|----------------|----------------------------------|
+| `0xC0` | app → keyboard | push usage data                  |
+| `0xC1` | app → keyboard | set display state (mode/source)  |
+| `0xC1` | keyboard → app | state report (same ID reused)    |
+| `0xC2` | app → keyboard | query current state              |
+| `0xC3` | app → keyboard | set LED role table               |
+| `0xC4` | app → keyboard | set bar style                    |
 
-| 字节 | 含义 |
-|------|------|
+## 0xC0 — usage data push (app → keyboard)
+
+| Byte | Meaning |
+|------|---------|
 | 0    | `0xC0` |
-| 1    | 协议版本 = `1` |
-| 2    | 有效标志:bit0 = Claude 数据有效,bit1 = Codex 数据有效 |
-| 3    | Claude 5 小时窗口用量 % (0–100,`0xFF` = 未知) |
-| 4    | Claude 周限额用量 % (同上) |
-| 5    | Claude 今日消耗 % (相对日预算,可 >100 截断为 100;`0xFF` = 未知) |
-| 6    | Claude 活动状态:0 = 空闲,1 = 正在干活 |
-| 7    | Codex 5 小时窗口用量 % |
-| 8    | Codex 周限额用量 % |
-| 9    | Codex 今日消耗 % |
-| 10   | Codex 活动状态 |
-| 11–31| 保留,置 0 |
+| 1    | protocol version = `1` |
+| 2    | validity flags: bit0 = Claude data valid, bit1 = Codex data valid |
+| 3    | Claude 5-hour window usage % (0–100, `0xFF` = unknown) |
+| 4    | Claude weekly limit usage % (same) |
+| 5    | Claude today % (relative to daily budget, capped at 100; `0xFF` = unknown) |
+| 6    | Claude activity: 0 = idle, 1 = working |
+| 7    | Codex 5-hour window usage % |
+| 8    | Codex weekly limit usage % |
+| 9    | Codex today % |
+| 10   | Codex activity |
+| 11–31| reserved, zero |
 
-推送节奏:数据包每 15 秒一次;活动状态变化时立即补发。固件收到后刷新超时计时器。
+Push cadence: every 15 s, plus an immediate push on activity changes. Each `0xC0`
+resets the firmware's staleness timer.
 
-**超时**:固件超过 60 秒未收到 `0xC0` → 视为 app 离线,清除数据并恢复正常灯效。
+**Timeout**: no `0xC0` for 60 s → the app is considered offline; the firmware clears
+its data and restores the user's own lighting.
 
-## 0xC1 设置状态(app → 键盘)
+## 0xC1 — set state (app → keyboard)
 
-| 字节 | 含义 |
-|------|------|
+| Byte | Meaning |
+|------|---------|
 | 0    | `0xC1` |
-| 1    | 模式:0 = 额度,1 = 今日消耗,2 = 实时活动,`0xFF` = 不变 |
-| 2    | 数据源:0 = Claude,1 = Codex,`0xFF` = 不变 |
+| 1    | mode: 0 = quota, 1 = today, 2 = activity, `0xFF` = unchanged |
+| 2    | source: 0 = Claude, 1 = Codex, `0xFF` = unchanged |
 
-固件应用后立即回发一条状态回报(见下)。
+The firmware applies the change and immediately sends a state report (below).
 
-## 0xC1 状态回报(键盘 → app)
+## 0xC1 — state report (keyboard → app)
 
-键盘按键切换、收到 `0xC1`/`0xC2` 后发送:
+Sent on keyboard-side key switches and in response to `0xC1`/`0xC2`:
 
-| 字节 | 含义 |
-|------|------|
+| Byte | Meaning |
+|------|---------|
 | 0    | `0xC1` |
-| 1    | 当前模式 (0/1/2) |
-| 2    | 当前数据源 (0/1) |
-| 3    | 固件协议版本 = `1` |
+| 1    | current mode (0/1/2) |
+| 2    | current source (0/1) |
+| 3    | firmware protocol version = `1` |
 
-## 0xC2 查询状态(app → 键盘)
+## 0xC2 — query state (app → keyboard)
 
-| 字节 | 含义 |
-|------|------|
+| Byte | Meaning |
+|------|---------|
 | 0    | `0xC2` |
 
-固件回发状态回报。app 连接/重连成功后应立即发送一次,用于同步 UI。
+Firmware replies with a state report. The app should send this right after
+connecting/reconnecting to sync its UI.
 
-## 固件端自定义键码
+## 0xC3 — set LED role table (app → keyboard)
 
-| 键码 | VIA 显示 | 行为 |
-|------|---------|------|
-| `QK_KB_0` | USER00 | 循环切换模式(额度 → 今日消耗 → 活动 → …) |
-| `QK_KB_1` | USER01 | 切换数据源(Claude ↔ Codex) |
+| Byte | Meaning |
+|------|---------|
+| 0    | `0xC3` |
+| 1    | start LED index |
+| 2    | count |
+| 3…   | roles, one byte per LED: 0 = none, 1 = bar, 2 = indicator |
 
-状态保存在固件 RAM;掉电重置为 模式=额度,数据源=Claude。
+Roles live in firmware RAM; the app re-pushes them from its per-board config on every
+connect (no EEPROM writes). The compile-time table is the factory default.
+
+## 0xC4 — set bar style (app → keyboard)
+
+| Byte | Meaning |
+|------|---------|
+| 0    | `0xC4` |
+| 1    | 0 = count (number of lit LEDs encodes the percentage), 1 = color (all bar LEDs lit; green→red encodes the percentage) |
+
+## Firmware custom keycodes
+
+| Keycode | Shown in VIA | Behavior |
+|---------|--------------|----------|
+| `QK_KB_0` | CUSTOM(0) | cycle mode (quota → today → activity → …) |
+| `QK_KB_1` | CUSTOM(1) | toggle source (Claude ↔ Codex) |
+
+State is kept in firmware RAM; power loss resets to mode = quota, source = Claude.

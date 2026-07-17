@@ -6,7 +6,7 @@
 
 Claude Code / Codex 的额度、今日消耗、实时活动,直接显示在任何 VIA/QMK 键盘的灯上。macOS 菜单栏常驻,NASApunk 风格界面。
 
-[English](README.md) · [固件适配指南](firmware/README.md) · [HID 协议](docs/protocol.md)
+[English](README.md) · [固件适配指南](firmware/README.zh-CN.md) · [HID 协议](docs/protocol.zh-CN.md)
 
 <img src="docs/assets/ui-pro.png" alt="界面截图" width="820"/>
 

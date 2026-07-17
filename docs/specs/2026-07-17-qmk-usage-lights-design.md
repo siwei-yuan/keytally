@@ -1,3 +1,5 @@
+> **Historical archive** — the original design document (Chinese). Current behavior is documented in the READMEs and docs/protocol.md.
+
 # QMK Usage Lights — 设计文档
 
 日期:2026-07-17
