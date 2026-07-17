@@ -1,48 +1,44 @@
 # 固件(QMK keymap)
 
-`common/` 是与键盘型号无关的公共逻辑。键盘型号确认后,在 QMK 仓库为其新建 keymap
-(基于该键盘的 `via` keymap 复制),接入方式:
+目标键盘:**GrayStudio Think6.5 V3**(`gray_studio/think65v3`,STM32F072,
+6 颗 WS2812 氛围灯走 `rgblight`,键帽无 RGB)。
 
-**1. `rules.mk`**(在 via keymap 的基础上追加):
-
-```make
-RAW_ENABLE = yes        # VIA 已隐含开启,写上无妨
-SRC += usage_lights.c
-VPATH += <本仓库>/firmware/common
+```
+common/      与型号无关的公共逻辑(协议、状态机、rgblight 渲染)
+think65v3/   keymap 源码(VIA + usage lights),build.sh 会拷进 qmk_firmware
+build.sh     编译 / 刷机脚本
 ```
 
-**2. `usage_lights_config.h`**(keymap 目录下新建,按该键盘 LED 索引填写):
+## 构建与刷机
 
-```c
-#pragma once
-#define UL_BAR1_LEDS {17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28} // 数字排
-#define UL_BAR2_LEDS {33, 34, 35, 36, 37, 38, 39, 40, 41, 42}         // QWERTY 排
-#define UL_ACCENT_LED 0                                                // Esc
+```sh
+./build.sh          # 编译 → qmk_firmware/.build/gray_studio_think65v3_usage_lights.bin
+./build.sh flash    # 编译并刷机(需先按 PCB 背面 reset 键进 DFU 模式)
 ```
 
-LED 索引查键盘的 `info.json` → `rgb_matrix.layout`(顺序即索引),
-或用 `qmk info -kb <kb> -m` 对照矩阵位置。
+依赖:`brew install qmk/qmk/qmk`(需 trust qmk/qmk、osx-cross/arm、osx-cross/avr
+三个官方 tap)+ `~/qmk_firmware` 检出。
 
-**3. `keymap.c`**:
+## 灯效方案(6 灯)
 
-```c
-#include "usage_lights.h"
+- **LED 0 指示灯**:数据源颜色(Claude 珊瑚橙 / Codex 青);额度模式下周限额 ≥80%
+  时红色 1Hz 闪烁告警;数据源未安装时暗灰。
+- **LED 1–5 进度条**:
+  - 额度模式:5h 窗口用量,绿→红渐变;有消耗至少亮一格。
+  - 今日消耗模式:相对日预算的百分比,源色填充(与额度模式视觉区分)。
+- **活动模式**:干活时 6 灯整体源色呼吸(2.2s);空闲时**完全不接管**,
+  显示用户自己的 rgblight 灯效。
+- app 离线(拔线/退出)60 秒后从 EEPROM 恢复用户灯效设置,键盘恢复原样。
+- LED 物理顺序若与预期不符,改 `think65v3/usage_lights_config.h`。
 
-bool process_record_user(uint16_t keycode, keyrecord_t *record) {
-    return process_record_usage_lights(keycode, record);
-}
+## 键盘上切换
 
-bool rgb_matrix_indicators_advanced_user(uint8_t led_min, uint8_t led_max) {
-    return ul_render(led_min, led_max);
-}
-```
+Fn 层已绑:`Fn+,` 切模式,`Fn+.` 切数据源(即 `UL_KC_MODE`/`UL_KC_SRC`,
+VIA 里用 Any 键填 `QK_KB_0`/`QK_KB_1` 可重绑)。
 
-把 `UL_KC_MODE` / `UL_KC_SRC`(VIA 里叫 USER00/USER01)绑到任意键位即可
-在键盘上切模式/切数据源。
+## 行为细节
 
-## 行为
-
-- app 离线(拔线/退出)60 秒后固件完全不再干预灯效,键盘恢复原样。
-- 模式/数据源状态存 RAM,掉电重置为 额度/Claude。
-- VIA 改键照常可用;本协议命令区间 0xC0–0xCF 在 `via_command_kb()` 截获,
-  不影响 VIA 协议本身。
+- 模式/数据源状态存 RAM,掉电重置为 额度/Claude;切换后固件回发状态包,app UI 同步。
+- VIA 改键照常可用;本协议命令区间 0xC0–0xCF 在 `via_command_kb()` 截获。
+- 上游 kb 级代码的 Caps Lock 白灯层(rgblight layer)优先级更高,开大写时 6 灯变白,
+  属预期行为。
