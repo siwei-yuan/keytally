@@ -88,10 +88,10 @@
             用带 usage 灯效的开源 QMK 固件替换原厂固件,以解锁逐灯进度条、
             键盘按键切换、断线自愈。键位与宏会自动备份并写回,VIA 改键照常可用。
           </p>
+          <div id="pro-status">检测中…</div>
           <div class="pro-row">
-            <span id="pro-status">检测中…</span>
             <button id="backup-keymap">备份键位</button>
-            <button id="upgrade-pro" disabled>刷入 Pro 固件</button>
+            <span class="btn-group"><button id="upgrade-pro" disabled>刷入 Pro 固件</button><span class="beta">BETA</span></span>
             <button id="restore-stock" disabled>还原原厂固件</button>
           </div>
           <div id="pro-progress"></div>

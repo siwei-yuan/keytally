@@ -124,8 +124,14 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 .settings button:hover { background: var(--accent); color: #0f1013; }
 
 .pro { border-top: 1px dashed var(--hairline); margin-top: 14px; padding-top: 12px; display: flex; flex-direction: column; gap: 10px; }
-.pro-row { display: flex; align-items: center; gap: 12px; }
-#pro-status { color: var(--muted); font-size: 12px; flex: 1; }
+.pro-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#pro-status { color: var(--muted); font-size: 12px; }
+.btn-group { display: inline-flex; align-items: center; gap: 6px; }
+.beta {
+  font-size: 9px; letter-spacing: 1.5px; color: var(--accent);
+  border: 1px solid var(--accent); border-radius: 2px; padding: 1px 5px;
+  vertical-align: middle;
+}
 #pro-progress { color: var(--accent); font-size: 12px; font-family: var(--mono); min-height: 16px; }
 .pro button:disabled { opacity: 0.35; cursor: default; }
 .pro button.armed { border-color: #d0342c; color: #d0342c; }
