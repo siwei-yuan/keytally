@@ -22,8 +22,8 @@ export function applyCustom(claude: string, codex: string, warn: number, metric:
   WARN_PCT = warn;
   QUOTA_METRIC = metric;
 }
-const OFF = "#23262d";
-const INVALID = "#3a3f48";
+const OFF = "#413d33";
+const INVALID = "#6b6557";
 
 export interface LedFrame {
   // 6 颗灯的颜色;索引 0 = 数据源指示,1-5 = 进度条(与固件 UL_ACCENT_LED/UL_BAR_LEDS 对应)
@@ -156,7 +156,7 @@ export function renderUniversal(el: HTMLElement, look: ViaLook, accent: string) 
   const w = 16 * U;
   const h = 5 * U;
   const cls = [look.breathing ? "breathing" : "", look.blinkWarn ? "blink-warn" : "", look.color === null ? "passthrough" : ""].join(" ");
-  const fill = look.color ?? "#3a3f48";
+  const fill = look.color ?? "#d8d2c0";
   const keyRects = KEYS.map((k) => {
     const label = k.label
       ? `<text x="${(k.x + k.w / 2) * U}" y="${(k.y + 0.58) * U}" text-anchor="middle">${k.label}</text>`
@@ -174,11 +174,11 @@ export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string)
     const label = k.label
       ? `<text x="${(k.x + k.w / 2) * U}" y="${(k.y + 0.58) * U}" text-anchor="middle">${k.label}</text>`
       : "";
-    return `<g><rect x="${k.x * U + GAP / 2}" y="${k.y * U + GAP / 2}" width="${k.w * U - GAP}" height="${U - GAP}" rx="5" fill="#1d2026"/>${label}</g>`;
+    return `<g><rect x="${k.x * U + GAP / 2}" y="${k.y * U + GAP / 2}" width="${k.w * U - GAP}" height="${U - GAP}" rx="5" fill="#efeadb"/>${label}</g>`;
   }).join("");
 
   // 徽章:挡块区 1u × 2u,内嵌 6 颗 LED(2 列 × 3 行)
-  const badge = `<rect x="${BADGE_X * U + GAP / 2}" y="${BADGE_Y * U + GAP / 2}" width="${U - GAP}" height="${2 * U - GAP}" rx="6" fill="#14161a" stroke="#2b2f37"/>`;
+  const badge = `<rect x="${BADGE_X * U + GAP / 2}" y="${BADGE_Y * U + GAP / 2}" width="${U - GAP}" height="${2 * U - GAP}" rx="6" fill="#26231d" stroke="#8a8270"/>`;
   const leds = frame.leds
     .map((color, i) => {
       const col = i % 2;
@@ -215,7 +215,7 @@ export function renderStrip(el: HTMLElement, frame: LedFrame, accent: string, na
     .join("");
   el.innerHTML = `<svg viewBox="0 0 ${w} 90" style="--accent:${accent}">
     <defs><filter id="glow2"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
-    <rect x="10" y="25" width="${n * sp + 20}" height="40" rx="10" fill="#14161a" stroke="#2b2f37"/>
+    <rect x="10" y="25" width="${n * sp + 20}" height="40" rx="10" fill="#26231d" stroke="#8a8270"/>
     <text x="${w / 2}" y="16" text-anchor="middle">${name} · ${n} 灯</text>${dots}
   </svg>`;
 }
