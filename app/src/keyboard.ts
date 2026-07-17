@@ -22,8 +22,8 @@ export function applyCustom(claude: string, codex: string, warn: number, metric:
   WARN_PCT = warn;
   QUOTA_METRIC = metric;
 }
-const OFF = "#413d33";
-const INVALID = "#6b6557";
+const OFF = "#2a2c31";
+const INVALID = "#4a4d55";
 
 export interface LedFrame {
   // 6 颗灯的颜色;索引 0 = 数据源指示,1-5 = 进度条(与固件 UL_ACCENT_LED/UL_BAR_LEDS 对应)
@@ -156,7 +156,7 @@ export function renderUniversal(el: HTMLElement, look: ViaLook, accent: string) 
   const w = 16 * U;
   const h = 5 * U;
   const cls = [look.breathing ? "breathing" : "", look.blinkWarn ? "blink-warn" : "", look.color === null ? "passthrough" : ""].join(" ");
-  const fill = look.color ?? "#d8d2c0";
+  const fill = look.color ?? "#24262b";
   const keyRects = KEYS.map((k) => {
     const label = k.label
       ? `<text x="${(k.x + k.w / 2) * U}" y="${(k.y + 0.58) * U}" text-anchor="middle">${k.label}</text>`
@@ -166,7 +166,7 @@ export function renderUniversal(el: HTMLElement, look: ViaLook, accent: string) 
   el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="--accent:${accent}">${keyRects}</svg>`;
 }
 
-export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string, zoom = false) {
+export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string) {
   const w = 16 * U;
   const h = 5 * U;
 
@@ -174,15 +174,19 @@ export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string,
     const label = k.label
       ? `<text x="${(k.x + k.w / 2) * U}" y="${(k.y + 0.58) * U}" text-anchor="middle">${k.label}</text>`
       : "";
-    return `<g><rect x="${k.x * U + GAP / 2}" y="${k.y * U + GAP / 2}" width="${k.w * U - GAP}" height="${U - GAP}" rx="5" fill="#d3cebe"/>${label}</g>`;
+    return `<g><rect x="${k.x * U + GAP / 2}" y="${k.y * U + GAP / 2}" width="${k.w * U - GAP}" height="${U - GAP}" rx="5" fill="#1b1d21" stroke="#ffffff14"/>${label}</g>`;
   }).join("");
 
   // 徽章:挡块区 1u × 2u —— 高亮的可控灯区
   const bx = BADGE_X * U + GAP / 2, by = BADGE_Y * U + GAP / 2;
+  const bw = U - GAP, bh = 2 * U - GAP, m = 6, t = 10;
+  const corner = (cx2: number, cy2: number, dx: number, dy: number) =>
+    `<path d="M ${cx2 + dx * t} ${cy2} L ${cx2} ${cy2} L ${cx2} ${cy2 + dy * t}" fill="none" stroke="${accent}" stroke-width="1.5"/>`;
   const badge = `
-    <rect x="${bx - 5}" y="${by - 5}" width="${U - GAP + 10}" height="${2 * U - GAP + 10}" rx="9" fill="none" stroke="${accent}" stroke-width="2.5" stroke-dasharray="6 4" opacity="0.95"/>
-    <rect x="${bx}" y="${by}" width="${U - GAP}" height="${2 * U - GAP}" rx="6" fill="#1c1a15" stroke="#8a8270"/>
-    <text x="${bx + (U - GAP) / 2}" y="${by - 12}" text-anchor="middle" style="fill:${accent};font-weight:700;letter-spacing:2px">LED</text>`;
+    ${corner(bx - m, by - m, 1, 1)}${corner(bx + bw + m, by - m, -1, 1)}
+    ${corner(bx - m, by + bh + m, 1, -1)}${corner(bx + bw + m, by + bh + m, -1, -1)}
+    <rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="5" fill="#0c0d10" stroke="#ffffff22"/>
+    <text x="${bx + bw / 2}" y="${by + bh + m + 16}" text-anchor="middle" style="fill:${accent};letter-spacing:2px;font-size:9px">LED</text>`;
   const leds = frame.leds
     .map((color, i) => {
       const col = i % 2;
@@ -199,7 +203,7 @@ export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string,
     })
     .join("");
 
-  el.innerHTML = `<svg class="${zoom ? "zoomed" : ""}" viewBox="0 0 ${w} ${h}" style="--accent:${accent}">
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="--accent:${accent}">
     <defs><filter id="glow"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
     ${keyRects}${badge}${leds}
   </svg>`;

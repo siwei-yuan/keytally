@@ -24,20 +24,20 @@
 
       <div class="legend">
         <span><i class="chip grad"></i>灯色 = 用量 0→100%</span>
-        <span><i class="chip" style="background:#e8641b"></i>源指示色(活动呼吸)</span>
+        <span><i class="chip" style="background:#e8641b"></i>活动中 = 亮这个颜色</span>
         <span><i class="chip warn"></i>红闪 = 周限额超阈值</span>
       </div>
 
       <section class="controls">
         <div class="ctl">
-        <span class="sec-label">数据源</span>
+        <span class="sec-label">01 / 数据源</span>
         <div class="seg" id="source-seg">
           <button data-source="0">Claude</button>
           <button data-source="1">Codex</button>
         </div>
         </div>
         <div class="ctl">
-        <span class="sec-label">灯光显示指标 ▸ 选择灯珠亮什么</span>
+        <span class="sec-label">02 / 灯珠显示什么</span>
         <div class="seg" id="mode-seg">
           <button data-mode="0">额度</button>
           <button data-mode="1">今日消耗</button>
@@ -70,8 +70,8 @@
             <option value="2">两者取大</option>
           </select>
         </label>
-        <label>Claude 源指示色(活动模式呼吸色/指示灯) <input id="claude-color" type="color" /></label>
-        <label>Codex 源指示色(活动模式呼吸色/指示灯) <input id="codex-color" type="color" /></label>
+        <label>Claude 活动时灯亮这个颜色 <input id="claude-color" type="color" /></label>
+        <label>Codex 活动时灯亮这个颜色 <input id="codex-color" type="color" /></label>
         <button id="save-config">保存</button>
       </details>
     </main>
