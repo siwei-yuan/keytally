@@ -129,3 +129,5 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 #pro-progress { color: var(--accent); font-size: 12px; font-family: var(--mono); min-height: 16px; }
 .pro button:disabled { opacity: 0.35; cursor: default; }
 .pro button.armed { border-color: #d0342c; color: #d0342c; }
+.pro-note { color: var(--muted); font-size: 11px; line-height: 1.7; margin: 0; }
+.pro-note b { color: var(--accent); font-weight: 600; }

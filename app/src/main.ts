@@ -145,13 +145,13 @@ function renderPro() {
     statusEl.textContent = "键盘未连接";
     btn.disabled = true;
   } else if (kb.backend === "pro") {
-    statusEl.textContent = "✅ 已运行 Pro 固件";
+    statusEl.textContent = "✅ 键盘已运行 Pro 固件";
     btn.disabled = true;
   } else if (PRO_BOARDS.has(key)) {
-    statusEl.textContent = "可升级(已有本板固件)";
+    statusEl.textContent = "本键盘已有可刷的 Pro 固件";
     btn.disabled = false;
   } else {
-    statusEl.textContent = "该键盘暂无 Pro 固件,欢迎适配";
+    statusEl.textContent = "该型号暂无 Pro 固件(需社区适配)";
     btn.disabled = true;
   }
 }
@@ -235,13 +235,13 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("#upgrade-pro").addEventListener("click", async () => {
     const btn = $<HTMLButtonElement>("#upgrade-pro");
     if (upgradeArmed === null) {
-      btn.textContent = "再点一次确认刷入";
+      btn.textContent = "再点一次,确认改写键盘固件";
       btn.classList.add("armed");
       $("#pro-progress").textContent =
-        "确认后自动:备份键位 → 进 DFU → 刷入 → 恢复键位;约 1 分钟,期间键盘短暂失灵,勿拔线。";
+        "将改写键盘固件:备份键位/宏 → 进 DFU → 刷入 → 写回;约 1 分钟,期间键盘短暂失灵,勿拔线。";
       upgradeArmed = window.setTimeout(() => {
         upgradeArmed = null;
-        btn.textContent = "升级到 Pro";
+        btn.textContent = "刷入 Pro 固件";
         btn.classList.remove("armed");
         $("#pro-progress").textContent = "";
       }, 6000);
@@ -249,7 +249,7 @@ window.addEventListener("DOMContentLoaded", async () => {
     }
     clearTimeout(upgradeArmed);
     upgradeArmed = null;
-    btn.textContent = "升级到 Pro";
+    btn.textContent = "刷入 Pro 固件";
     btn.classList.remove("armed");
     try {
       await invoke("upgrade_to_pro");

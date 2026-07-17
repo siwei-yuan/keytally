@@ -75,11 +75,16 @@
         <button id="save-config">保存</button>
 
         <div class="pro">
-          <span class="sec-label">PRO 固件(逐灯进度条 / 键盘按键切换 / 断线自愈)</span>
+          <span class="sec-label">PRO 模式 — 需刷写键盘固件</span>
+          <p class="pro-note">
+            注意:「刷入 Pro 固件」会<b>改写键盘本体的固件</b>(不是升级本软件),
+            用带 usage 灯效的开源 QMK 固件替换原厂固件,以解锁逐灯进度条、
+            键盘按键切换、断线自愈。键位与宏会自动备份并写回,VIA 改键照常可用。
+          </p>
           <div class="pro-row">
             <span id="pro-status">检测中…</span>
             <button id="backup-keymap">备份键位</button>
-            <button id="upgrade-pro" disabled>升级到 Pro</button>
+            <button id="upgrade-pro" disabled>刷入 Pro 固件</button>
           </div>
           <div id="pro-progress"></div>
         </div>
