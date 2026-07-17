@@ -1,22 +1,116 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import {
+  computeColors,
+  GENERIC_60,
+  renderKeyboard,
+  type Snapshot,
+  type SourceUsage,
+} from "./keyboard";
 
-let greetInputEl: HTMLInputElement | null;
-let greetMsgEl: HTMLElement | null;
-
-async function greet() {
-  if (greetMsgEl && greetInputEl) {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsgEl.textContent = await invoke("greet", {
-      name: greetInputEl.value,
-    });
-  }
+interface KbState {
+  mode: number;
+  source: number;
+  connected: boolean;
+  device_name: string | null;
 }
 
-window.addEventListener("DOMContentLoaded", () => {
-  greetInputEl = document.querySelector("#greet-input");
-  greetMsgEl = document.querySelector("#greet-msg");
-  document.querySelector("#greet-form")?.addEventListener("submit", (e) => {
-    e.preventDefault();
-    greet();
+interface AppConfig {
+  claude_daily_budget: number;
+  codex_daily_budget: number;
+}
+
+interface FullState {
+  snapshot: Snapshot;
+  kb: KbState;
+  config: AppConfig;
+}
+
+let state: FullState | null = null;
+
+const $ = <T extends HTMLElement>(sel: string) => document.querySelector(sel) as T;
+
+function fmtPct(p: number | null): string {
+  return p === null ? "--" : `${p}%`;
+}
+
+function fmtTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function render() {
+  if (!state) return;
+  const { snapshot, kb, config } = state;
+
+  const dot = $("#conn-dot");
+  dot.className = `dot ${kb.connected ? "on" : "off"}`;
+  $("#conn-text").textContent = kb.connected
+    ? `已连接:${kb.device_name ?? "QMK 键盘"}`
+    : "未连接键盘(预览仍实时)";
+
+  for (const btn of document.querySelectorAll<HTMLButtonElement>("#source-seg button")) {
+    btn.classList.toggle("active", Number(btn.dataset.source) === kb.source);
+  }
+  for (const btn of document.querySelectorAll<HTMLButtonElement>("#mode-seg button")) {
+    btn.classList.toggle("active", Number(btn.dataset.mode) === kb.mode);
+  }
+
+  const budget = kb.source === 0 ? config.claude_daily_budget : config.codex_daily_budget;
+  renderKeyboard(
+    $("#preview"),
+    GENERIC_60,
+    computeColors(GENERIC_60, snapshot, kb.mode, kb.source, budget)
+  );
+
+  const u: SourceUsage = kb.source === 0 ? snapshot.claude : snapshot.codex;
+  const todayPct = budget > 0 ? Math.min(100, Math.round((u.today_tokens * 100) / budget)) : null;
+  $("#stats").innerHTML = `
+    <div class="stat"><span class="k">5 小时窗口</span><span class="v">${fmtPct(u.five_hour_pct)}</span></div>
+    <div class="stat"><span class="k">周限额</span><span class="v">${fmtPct(u.weekly_pct)}</span></div>
+    <div class="stat"><span class="k">今日消耗</span><span class="v">${fmtTokens(u.today_tokens)}${todayPct === null ? "" : ` (${todayPct}%)`}</span></div>
+    <div class="stat"><span class="k">状态</span><span class="v">${u.valid ? (u.active ? "🔥 干活中" : "空闲") : "未安装"}</span></div>`;
+}
+
+function fillSettings() {
+  if (!state) return;
+  $<HTMLInputElement>("#claude-budget").value = String(state.config.claude_daily_budget);
+  $<HTMLInputElement>("#codex-budget").value = String(state.config.codex_daily_budget);
+}
+
+window.addEventListener("DOMContentLoaded", async () => {
+  $("#source-seg").addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("button");
+    if (!btn || !state) return;
+    state.kb.source = Number(btn.dataset.source);
+    render();
+    invoke("set_kb_state", { mode: null, source: state.kb.source });
   });
+
+  $("#mode-seg").addEventListener("click", (e) => {
+    const btn = (e.target as HTMLElement).closest("button");
+    if (!btn || !state) return;
+    state.kb.mode = Number(btn.dataset.mode);
+    render();
+    invoke("set_kb_state", { mode: state.kb.mode, source: null });
+  });
+
+  $("#save-config").addEventListener("click", () => {
+    invoke("set_config", {
+      config: {
+        claude_daily_budget: Number($<HTMLInputElement>("#claude-budget").value) || 0,
+        codex_daily_budget: Number($<HTMLInputElement>("#codex-budget").value) || 0,
+      },
+    });
+  });
+
+  await listen<FullState>("state", (e) => {
+    state = e.payload;
+    render();
+  });
+
+  state = await invoke<FullState>("get_state");
+  render();
+  fillSettings();
 });

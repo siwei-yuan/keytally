@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 /// 单个数据源(Claude 或 Codex)的采集结果。
 /// 百分比字段 None = 未知(打包时映射为 0xFF)。
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct SourceUsage {
     pub valid: bool,
     pub five_hour_pct: Option<u8>,
@@ -11,7 +11,7 @@ pub struct SourceUsage {
     pub active: bool,
 }
 
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
 pub struct Snapshot {
     pub claude: SourceUsage,
     pub codex: SourceUsage,

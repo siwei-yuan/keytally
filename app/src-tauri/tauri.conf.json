@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "app",
+  "productName": "QMK Usage Lights",
   "version": "0.1.0",
-  "identifier": "com.ysw.app",
+  "identifier": "com.ysw.qmk-usage-lights",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,9 +13,10 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "app",
-        "width": 800,
-        "height": 600
+        "title": "QMK Usage Lights",
+        "width": 560,
+        "height": 720,
+        "resizable": true
       }
     ],
     "security": {
