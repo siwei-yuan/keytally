@@ -14,10 +14,16 @@ export interface Snapshot {
   codex: SourceUsage;
 }
 
-export const ACCENTS = ["#D97757", "#10A37F"]; // Claude 珊瑚橙 / Codex 青
+export let ACCENTS = ["#D97757", "#10A37F"]; // Claude 珊瑚橙 / Codex 青(可被设置覆盖)
+export let WARN_PCT = 80;
+export let QUOTA_METRIC = 0; // 0=5h 优先,1=周优先,2=取大
+export function applyCustom(claude: string, codex: string, warn: number, metric: number) {
+  ACCENTS = [claude, codex];
+  WARN_PCT = warn;
+  QUOTA_METRIC = metric;
+}
 const OFF = "#23262d";
 const INVALID = "#3a3f48";
-const WEEKLY_WARN_PCT = 80;
 
 export interface LedFrame {
   // 6 颗灯的颜色;索引 0 = 数据源指示,1-5 = 进度条(与固件 UL_ACCENT_LED/UL_BAR_LEDS 对应)
@@ -51,7 +57,7 @@ export function computeLeds(snap: Snapshot, mode: number, source: number, budget
   }
 
   if (mode === 0) {
-    const warn = u.weekly_pct !== null && u.weekly_pct >= WEEKLY_WARN_PCT;
+    const warn = u.weekly_pct !== null && u.weekly_pct >= WARN_PCT;
     return { ...base, leds: [accent, ...barColors(u.five_hour_pct, gradeColor)], blinkAccent: warn };
   }
   if (mode === 1) {
@@ -65,13 +71,13 @@ export function computeLeds(snap: Snapshot, mode: number, source: number, budget
   return { ...base, leds: Array(6).fill(OFF), passthrough: true };
 }
 
-/// VIA 通用模式 + rgblight 键盘:6 颗徽章灯同色
-export function viaLookToFrame(look: ViaLook): LedFrame {
+/// VIA 通用模式 + rgblight 键盘:N 颗灯同色
+export function viaLookToFrame(look: ViaLook, n = 6): LedFrame {
   if (look.color === null) {
-    return { leds: Array(6).fill(OFF), breathing: false, blinkAccent: false, blinkAll: false, passthrough: true };
+    return { leds: Array(n).fill(OFF), breathing: false, blinkAccent: false, blinkAll: false, passthrough: true };
   }
   return {
-    leds: Array(6).fill(look.color),
+    leds: Array(n).fill(look.color),
     breathing: look.breathing,
     blinkAccent: false,
     blinkAll: look.blinkWarn,
@@ -93,11 +99,15 @@ export function computeViaLook(snap: Snapshot, mode: number, source: number, bud
   const pass: ViaLook = { color: null, blinkWarn: false, breathing: false };
   if (!u.valid) return pass;
   if (mode === 0) {
-    const pct = u.five_hour_pct ?? u.weekly_pct;
+    const pct =
+      QUOTA_METRIC === 1 ? (u.weekly_pct ?? u.five_hour_pct)
+      : QUOTA_METRIC === 2 ? Math.max(u.five_hour_pct ?? -1, u.weekly_pct ?? -1) >= 0
+          ? Math.max(u.five_hour_pct ?? 0, u.weekly_pct ?? 0) : null
+      : (u.five_hour_pct ?? u.weekly_pct);
     if (pct === null) return pass;
     return {
       color: gradeColor(pct),
-      blinkWarn: u.weekly_pct !== null && u.weekly_pct >= WEEKLY_WARN_PCT,
+      blinkWarn: u.weekly_pct !== null && u.weekly_pct >= WARN_PCT,
       breathing: false,
     };
   }
@@ -188,5 +198,24 @@ export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string)
   el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="--accent:${accent}">
     <defs><filter id="glow"><feGaussianBlur stdDeviation="2.2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
     ${keyRects}${badge}${leds}
+  </svg>`;
+}
+
+/// 通用 rgblight 灯带(不知道物理位置的键盘):一排 N 颗灯
+export function renderStrip(el: HTMLElement, frame: LedFrame, accent: string, name: string) {
+  const n = frame.leds.length;
+  const sp = 34;
+  const w = Math.max(n * sp + 20, 300);
+  const dots = frame.leds
+    .map((color, i) => {
+      const cls = [frame.breathing ? "breathing" : "", frame.blinkAll ? "blink-warn" : "", frame.passthrough ? "passthrough" : ""].join(" ");
+      const glow = !frame.passthrough && color !== OFF ? 'filter="url(#glow2)"' : "";
+      return `<circle class="${cls}" cx="${20 + i * sp + sp / 2}" cy="45" r="8" fill="${color}" ${glow}/>`;
+    })
+    .join("");
+  el.innerHTML = `<svg viewBox="0 0 ${w} 90" style="--accent:${accent}">
+    <defs><filter id="glow2"><feGaussianBlur stdDeviation="2.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+    <rect x="10" y="25" width="${n * sp + 20}" height="40" rx="10" fill="#14161a" stroke="#2b2f37"/>
+    <text x="${w / 2}" y="16" text-anchor="middle">${name} · ${n} 灯</text>${dots}
   </svg>`;
 }

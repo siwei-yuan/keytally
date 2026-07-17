@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { LED_DB } from "./led-db";
 import {
   ACCENTS,
+  applyCustom,
   computeLeds,
   computeViaLook,
   renderKeyboard,
@@ -9,6 +11,7 @@ import {
   viaLookToFrame,
   type Snapshot,
   type SourceUsage,
+  renderStrip,
 } from "./keyboard";
 
 interface KbState {
@@ -18,11 +21,17 @@ interface KbState {
   device_name: string | null;
   backend: string | null;
   lighting: string | null;
+  vid: number;
+  pid: number;
 }
 
 interface AppConfig {
   claude_daily_budget: number;
   codex_daily_budget: number;
+  warn_threshold: number;
+  quota_metric: number;
+  claude_color: string;
+  codex_color: string;
 }
 
 interface FullState {
@@ -68,6 +77,7 @@ function render() {
     btn.classList.toggle("active", Number(btn.dataset.mode) === kb.mode);
   }
 
+  applyCustom(config.claude_color, config.codex_color, config.warn_threshold, config.quota_metric);
   const budget = kb.source === 0 ? config.claude_daily_budget : config.codex_daily_budget;
   const accent = ACCENTS[kb.source] ?? ACCENTS[0];
   if (kb.backend === "pro") {
@@ -76,9 +86,17 @@ function render() {
     // 逐键 RGB 键盘:整板同色
     renderUniversal($("#preview"), computeViaLook(snapshot, kb.mode, kb.source, budget), accent);
   } else {
-    // rgblight 灯带/徽章键盘(如 Think6.5 V3):只亮徽章区
+    const key = `${kb.vid.toString(16).padStart(4, "0")}:${kb.pid.toString(16).padStart(4, "0")}`;
+    const dev = LED_DB[key];
     const look = computeViaLook(snapshot, kb.mode, kb.source, budget);
-    renderKeyboard($("#preview"), viaLookToFrame(look), look.color ?? accent);
+    if (!kb.connected || key === "4753:4003") {
+      // Think6.5 V3(或未连接时的默认视图):右侧徽章 6 灯
+      renderKeyboard($("#preview"), viaLookToFrame(look), look.color ?? accent);
+    } else {
+      // 其他 rgblight 键盘:按数据库的灯数画通用灯带
+      const n = dev?.rl || 6;
+      renderStrip($("#preview"), viaLookToFrame(look, n), look.color ?? accent, dev?.n ?? kb.device_name ?? "RGB");
+    }
   }
 
   const u: SourceUsage = kb.source === 0 ? snapshot.claude : snapshot.codex;
@@ -94,6 +112,10 @@ function fillSettings() {
   if (!state) return;
   $<HTMLInputElement>("#claude-budget").value = String(state.config.claude_daily_budget);
   $<HTMLInputElement>("#codex-budget").value = String(state.config.codex_daily_budget);
+  $<HTMLInputElement>("#warn-threshold").value = String(state.config.warn_threshold);
+  $<HTMLSelectElement>("#quota-metric").value = String(state.config.quota_metric);
+  $<HTMLInputElement>("#claude-color").value = state.config.claude_color;
+  $<HTMLInputElement>("#codex-color").value = state.config.codex_color;
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -118,6 +140,10 @@ window.addEventListener("DOMContentLoaded", async () => {
       config: {
         claude_daily_budget: Number($<HTMLInputElement>("#claude-budget").value) || 0,
         codex_daily_budget: Number($<HTMLInputElement>("#codex-budget").value) || 0,
+        warn_threshold: Math.min(100, Number($<HTMLInputElement>("#warn-threshold").value) || 80),
+        quota_metric: Number($<HTMLSelectElement>("#quota-metric").value) || 0,
+        claude_color: $<HTMLInputElement>("#claude-color").value,
+        codex_color: $<HTMLInputElement>("#codex-color").value,
       },
     });
   });
@@ -135,8 +161,8 @@ window.addEventListener("DOMContentLoaded", async () => {
         claude: { valid: true, five_hour_pct: 63, weekly_pct: 17, today_tokens: 2_615_737, active: true },
         codex: { valid: true, five_hour_pct: null, weekly_pct: 1, today_tokens: 0, active: false },
       },
-      kb: { mode: 0, source: 0, connected: false, device_name: null, backend: null, lighting: null },
-      config: { claude_daily_budget: 5_000_000, codex_daily_budget: 5_000_000 },
+      kb: { mode: 0, source: 0, connected: false, device_name: null, backend: null, lighting: null, vid: 0, pid: 0 },
+      config: { claude_daily_budget: 5_000_000, codex_daily_budget: 5_000_000, warn_threshold: 80, quota_metric: 0, claude_color: "#D97757", codex_color: "#10A37F" },
     };
   }
   render();

@@ -9,11 +9,17 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
     pub claude_daily_budget: u64,
     pub codex_daily_budget: u64,
+    /// 周限额告警阈值(%)
+    pub warn_threshold: u8,
+    /// 额度模式指标:0=5h 优先,1=周优先,2=两者取大
+    pub quota_metric: u8,
+    pub claude_color: String,
+    pub codex_color: String,
 }
 
 impl Default for AppConfig {
@@ -21,6 +27,10 @@ impl Default for AppConfig {
         Self {
             claude_daily_budget: 5_000_000,
             codex_daily_budget: 5_000_000,
+            warn_threshold: 80,
+            quota_metric: 0,
+            claude_color: "#D97757".into(),
+            codex_color: "#10A37F".into(),
         }
     }
 }
@@ -35,10 +45,26 @@ pub struct KbState {
     pub backend: Option<String>,
     /// "rgblight"(灯带/徽章)| "rgb_matrix"(逐键)| "per-led"(Pro 固件)
     pub lighting: Option<String>,
+    pub vid: u16,
+    pub pid: u16,
 }
 
-// 数据源指示色的 QMK HSV(Claude #D97757 / Codex #10A37F)
-const ACCENT_HSV: [(u8, u8); 2] = [(13, 153), (117, 230)];
+/// "#RRGGBB" → QMK (hue, sat),解析失败用 Claude 默认色
+fn hex_to_hs(hex: &str) -> (u8, u8) {
+    let p = |i: usize| u8::from_str_radix(hex.get(i..i + 2).unwrap_or("00"), 16).unwrap_or(0) as f32 / 255.0;
+    if !hex.starts_with('#') || hex.len() < 7 {
+        return (13, 153);
+    }
+    let (r, g, b) = (p(1), p(3), p(5));
+    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+    let d = max - min;
+    let h = if d == 0.0 { 0.0 }
+        else if max == r { ((g - b) / d).rem_euclid(6.0) }
+        else if max == g { (b - r) / d + 2.0 }
+        else { (r - g) / d + 4.0 } / 6.0;
+    let s = if max == 0.0 { 0.0 } else { d / max };
+    ((h * 255.0) as u8, (s * 255.0) as u8)
+}
 
 /// 与 app 预览、Pro 固件一致的映射:模式+数据源 → 整板颜色
 fn compute_via_look(snap: &Snapshot, kb: &KbState, cfg: &AppConfig) -> hid::ViaLook {
@@ -47,7 +73,7 @@ fn compute_via_look(snap: &Snapshot, kb: &KbState, cfg: &AppConfig) -> hid::ViaL
     } else {
         (&snap.codex, cfg.codex_daily_budget)
     };
-    let accent = ACCENT_HSV[kb.source.min(1) as usize];
+    let accent = hex_to_hs(if kb.source == 0 { &cfg.claude_color } else { &cfg.codex_color });
     let passthrough = hid::ViaLook { passthrough: true, ..Default::default() };
     if !u.valid {
         return passthrough;
@@ -59,13 +85,20 @@ fn compute_via_look(snap: &Snapshot, kb: &KbState, cfg: &AppConfig) -> hid::ViaL
         ..Default::default()
     };
     match kb.mode {
-        0 => match u.five_hour_pct.or(u.weekly_pct) {
-            Some(pct) => hid::ViaLook {
-                blink_warn: u.weekly_pct.is_some_and(|w| w >= 80),
-                ..grade(pct)
-            },
-            None => passthrough,
-        },
+        0 => {
+            let pct = match cfg.quota_metric {
+                1 => u.weekly_pct.or(u.five_hour_pct),
+                2 => u.five_hour_pct.max(u.weekly_pct),
+                _ => u.five_hour_pct.or(u.weekly_pct),
+            };
+            match pct {
+                Some(pct) => hid::ViaLook {
+                    blink_warn: u.weekly_pct.is_some_and(|w| w >= cfg.warn_threshold),
+                    ..grade(pct)
+                },
+                None => passthrough,
+            }
+        }
         1 => {
             if budget == 0 {
                 return passthrough;
@@ -111,7 +144,7 @@ impl App {
         FullState {
             snapshot: sh.snapshot,
             kb: sh.kb.clone(),
-            config: sh.config,
+            config: sh.config.clone(),
         }
     }
 
@@ -154,7 +187,7 @@ fn set_kb_state(app: tauri::State<Arc<App>>, mode: Option<u8>, source: Option<u8
 fn set_config(app: tauri::State<Arc<App>>, handle: tauri::AppHandle, config: AppConfig) {
     {
         let mut sh = app.shared.lock().unwrap();
-        sh.config = config;
+        sh.config = config.clone();
     }
     if let Some(dir) = app.config_path.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -301,11 +334,13 @@ pub fn run() {
                     {
                         let mut sh = app.shared.lock().unwrap();
                         match ev {
-                            hid::Event::Connected { name, backend, lighting } => {
+                            hid::Event::Connected { name, backend, lighting, vid, pid } => {
                                 sh.kb.connected = true;
                                 sh.kb.device_name = name;
                                 sh.kb.backend = Some(backend.to_string());
                                 sh.kb.lighting = Some(lighting.to_string());
+                                sh.kb.vid = vid;
+                                sh.kb.pid = pid;
                             }
                             hid::Event::Disconnected => {
                                 sh.kb.connected = false;

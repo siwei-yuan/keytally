@@ -41,6 +41,20 @@
           Codex 日预算 (tokens)
           <input id="codex-budget" type="number" min="0" step="100000" />
         </label>
+        <label>
+          周限额告警阈值 (%)
+          <input id="warn-threshold" type="number" min="0" max="100" />
+        </label>
+        <label>
+          额度模式指标
+          <select id="quota-metric">
+            <option value="0">5 小时优先</option>
+            <option value="1">周限额优先</option>
+            <option value="2">两者取大</option>
+          </select>
+        </label>
+        <label>Claude 颜色 <input id="claude-color" type="color" /></label>
+        <label>Codex 颜色 <input id="codex-color" type="color" /></label>
         <button id="save-config">保存</button>
       </details>
     </main>

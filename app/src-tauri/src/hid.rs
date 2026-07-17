@@ -37,7 +37,7 @@ pub enum Cmd {
 }
 
 pub enum Event {
-    Connected { name: Option<String>, backend: &'static str, lighting: &'static str },
+    Connected { name: Option<String>, backend: &'static str, lighting: &'static str, vid: u16, pid: u16 },
     Disconnected,
     /// Pro 固件状态回报 (mode, source)
     State(u8, u8),
@@ -177,11 +177,11 @@ fn breathe_scale(t_ms: u128) -> u32 {
     115 + phase * 140 / 1100
 }
 
-fn find_device(api: &hidapi::HidApi) -> Option<(hidapi::HidDevice, Option<String>)> {
+fn find_device(api: &hidapi::HidApi) -> Option<(hidapi::HidDevice, Option<String>, u16, u16)> {
     for info in api.device_list() {
         if info.usage_page() == USAGE_PAGE && info.usage() == USAGE {
             if let Ok(dev) = info.open_device(api) {
-                return Some((dev, info.product_string().map(str::to_owned)));
+                return Some((dev, info.product_string().map(str::to_owned), info.vendor_id(), info.product_id()));
             }
         }
     }
@@ -208,7 +208,7 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                 None => api = hidapi::HidApi::new().ok(),
             }
             if let Some(a) = &api {
-                if let Some((dev, name)) = find_device(a) {
+                if let Some((dev, name, vid, pid)) = find_device(a) {
                     if let Some(be) = probe(&dev) {
                         let (backend, lighting) = match be {
                             Backend::Pro => ("pro", "per-led"),
@@ -223,7 +223,7 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                         taken_over = false;
                         last_applied = None;
                         conn = Some((dev, be));
-                        on_event(Event::Connected { name, backend, lighting });
+                        on_event(Event::Connected { name, backend, lighting, vid, pid });
                     }
                 }
             }
