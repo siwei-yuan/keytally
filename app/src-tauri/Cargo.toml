@@ -1,6 +1,6 @@
 [package]
 name = "qmk-usage-lights"
-version = "0.1.0"
+version = "0.1.1"
 description = "QMK 键盘灯组显示 Claude/Codex 用量"
 authors = ["ysw"]
 edition = "2021"
