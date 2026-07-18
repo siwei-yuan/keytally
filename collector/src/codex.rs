@@ -51,24 +51,42 @@ fn token_count_payload(line: &str) -> Option<Value> {
     Some(p)
 }
 
-pub fn parse_rate_limits_line(line: &str) -> Option<RateLimits> {
+/// 返回 (是否主计划桶, 限额)。Codex 会为个别模型单开限额桶
+/// (limit_name 非空,如 "GPT-5.3-Codex-Spark");订阅额度应取主桶
+/// (limit_id == "codex" 或 limit_name 为空)。
+pub fn parse_rate_limits_line(line: &str) -> Option<(bool, RateLimits)> {
     let payload = token_count_payload(line)?;
     let limits = payload.get("rate_limits")?;
+    let main = limits.get("limit_id").and_then(Value::as_str) == Some("codex")
+        || limits.get("limit_name").map_or(true, Value::is_null);
     let mut rl = RateLimits::default();
     for key in ["primary", "secondary"] {
         if let Some(win) = limits.get(key) {
             slot_window(&mut rl, win);
         }
     }
-    (rl.five_hour_pct.is_some() || rl.weekly_pct.is_some()).then_some(rl)
+    (rl.five_hour_pct.is_some() || rl.weekly_pct.is_some()).then_some((main, rl))
 }
 
-/// 取 reader 中最后一条 rate_limits。
+/// reader 中最后一条主桶限额与最后一条任意桶限额
+fn last_limits_split<R: BufRead>(r: R) -> (Option<RateLimits>, Option<RateLimits>) {
+    let mut main = None;
+    let mut any = None;
+    for line in r.lines().map_while(Result::ok) {
+        if let Some((is_main, rl)) = parse_rate_limits_line(&line) {
+            if is_main {
+                main = Some(rl);
+            }
+            any = Some(rl);
+        }
+    }
+    (main, any)
+}
+
+/// 取 reader 中最后一条 rate_limits(主桶优先)。
 pub fn last_rate_limits<R: BufRead>(r: R) -> Option<RateLimits> {
-    r.lines()
-        .map_while(Result::ok)
-        .filter_map(|l| parse_rate_limits_line(&l))
-        .last()
+    let (main, any) = last_limits_split(r);
+    main.or(any)
 }
 
 /// 计费口径:非缓存输入 + 输出。
@@ -121,12 +139,13 @@ pub fn scan(sessions_dir: &Path, today_start: DateTime<Utc>) -> (Option<RateLimi
 
     let today_start_sys: std::time::SystemTime = std::time::SystemTime::from(today_start);
 
-    let mut limits = None;
+    let mut limits_main: Option<RateLimits> = None;
+    let mut limits_any: Option<RateLimits> = None;
     let mut tokens = 0u64;
     for (mtime, path) in &files {
         let is_today = *mtime >= today_start_sys;
-        if limits.is_some() && !is_today {
-            break; // 额度已拿到,更旧的文件也不可能有今日消耗
+        if limits_main.is_some() && !is_today {
+            break; // 主桶额度已拿到,更旧的文件也不可能有今日消耗
         }
         let Ok(f) = std::fs::File::open(path) else {
             continue;
@@ -136,10 +155,14 @@ pub fn scan(sessions_dir: &Path, today_start: DateTime<Utc>) -> (Option<RateLimi
             // 一次读取同时拿两样,避免重复扫大文件
             let mut before: Option<u64> = None;
             let mut last: Option<u64> = None;
-            let mut file_limits = None;
+            let mut file_main = None;
+            let mut file_any = None;
             for line in reader.lines().map_while(Result::ok) {
-                if let Some(rl) = parse_rate_limits_line(&line) {
-                    file_limits = Some(rl);
+                if let Some((is_main, rl)) = parse_rate_limits_line(&line) {
+                    if is_main {
+                        file_main = Some(rl);
+                    }
+                    file_any = Some(rl);
                 }
                 let Some(payload) = token_count_payload(&line) else {
                     continue;
@@ -163,14 +186,21 @@ pub fn scan(sessions_dir: &Path, today_start: DateTime<Utc>) -> (Option<RateLimi
                 (None, Some(l)) => l,
                 _ => 0,
             };
-            if limits.is_none() {
-                limits = file_limits;
+            if limits_main.is_none() {
+                limits_main = file_main;
             }
-        } else if limits.is_none() {
-            limits = last_rate_limits(reader);
+            if limits_any.is_none() {
+                limits_any = file_any;
+            }
+        } else if limits_main.is_none() {
+            let (m, a) = last_limits_split(reader);
+            limits_main = m;
+            if limits_any.is_none() {
+                limits_any = a;
+            }
         }
     }
-    (limits, tokens)
+    (limits_main.or(limits_any), tokens)
 }
 
 #[cfg(test)]
@@ -189,14 +219,15 @@ mod tests {
 
     #[test]
     fn rate_limits_by_window_minutes() {
-        let rl = parse_rate_limits_line(&line("2026-07-17T01:00:00Z", 10, 0, 5, LIMITS)).unwrap();
+        let (main, rl) = parse_rate_limits_line(&line("2026-07-17T01:00:00Z", 10, 0, 5, LIMITS)).unwrap();
+        assert!(main);
         assert_eq!(rl.five_hour_pct, Some(12));
         assert_eq!(rl.weekly_pct, Some(57));
     }
 
     #[test]
     fn rate_limits_weekly_only_plan() {
-        let rl =
+        let (_, rl) =
             parse_rate_limits_line(&line("2026-07-17T01:00:00Z", 10, 0, 5, LIMITS_WEEKLY_ONLY))
                 .unwrap();
         assert_eq!(rl.five_hour_pct, None);
@@ -212,6 +243,28 @@ mod tests {
         .join("\n");
         let rl = last_rate_limits(data.as_bytes()).unwrap();
         assert_eq!(rl.five_hour_pct, Some(12));
+    }
+
+    const LIMITS_MODEL_BUCKET: &str = r#"{"limit_id":"codex_bengalfox","limit_name":"GPT-5.3-Codex-Spark","primary":{"used_percent":0.0,"window_minutes":10080,"resets_at":1784970609},"secondary":null}"#;
+
+    #[test]
+    fn model_bucket_does_not_shadow_main_limit() {
+        // 最后一条是模型专属桶(0%),但主桶(5%)才是订阅额度
+        let main = LIMITS_WEEKLY_ONLY.replace("\"used_percent\":1.0", "\"used_percent\":5.0");
+        let data = [
+            line("2026-07-18T01:00:00Z", 10, 0, 5, &main),
+            line("2026-07-18T02:00:00Z", 20, 0, 9, LIMITS_MODEL_BUCKET),
+        ]
+        .join("\n");
+        let rl = last_rate_limits(data.as_bytes()).unwrap();
+        assert_eq!(rl.weekly_pct, Some(5));
+    }
+
+    #[test]
+    fn model_bucket_used_as_fallback() {
+        let data = line("2026-07-18T02:00:00Z", 20, 0, 9, LIMITS_MODEL_BUCKET);
+        let rl = last_rate_limits(data.as_bytes()).unwrap();
+        assert_eq!(rl.weekly_pct, Some(0));
     }
 
     #[test]
