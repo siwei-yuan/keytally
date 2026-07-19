@@ -1,11 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { listen } from "@tauri-apps/api/event";
 import LED_DB_JSON from "./led-db.json";
 import PROFILES_JSON from "./profiles.json";
 import { applyStaticEn, t, trProgress } from "./i18n";
-import { ACCENTS, applyCustom, computeLeds, computeViaLook, DEFAULT_ROLES, viaLookToFrame } from "./compute";
+import { ACCENTS, applyCustom, computeLeds, computeViaLook, DEFAULT_ROLES } from "./compute";
 import { ghostByKeyCount, layoutByName } from "./layouts";
-import { renderKeyboard, renderUniversalView } from "./views";
+import { renderUniversalView } from "./views";
 import { initLedSelection } from "./select";
 import type { BoardData, BoardProfile, FullState, GhostKey, KbState, SourceUsage } from "./types";
 
@@ -133,9 +134,11 @@ function render() {
   const backendLabel =
     kb.backend === "pro"
       ? t("Pro 固件·逐灯", "Pro firmware · per-LED")
-      : kb.lighting === "rgb_matrix"
-        ? t("VIA 通用·整板同色", "Universal VIA · whole-board")
-        : t("VIA 通用·灯带同色", "Universal VIA · light strip");
+      : kb.lighting === "rgblight+rgb_matrix"
+        ? t("VIA 通用·灯带+全键背光", "Universal VIA · strip + per-key backlight")
+        : kb.lighting === "rgb_matrix"
+          ? t("VIA 通用·整板同色", "Universal VIA · whole-board")
+          : t("VIA 通用·灯带同色", "Universal VIA · light strip");
   $("#conn-text").textContent = kb.connected
     ? t(`已连接:${kb.device_name ?? "QMK 键盘"}(${backendLabel})`, `Connected: ${kb.device_name ?? "QMK keyboard"} (${backendLabel})`)
     : t("未连接键盘", "No keyboard connected");
@@ -167,7 +170,8 @@ function render() {
   } else if (kb.backend === "pro") {
     $("#preview").setAttribute("data-editable", "");
     const frame = computeLeds(snapshot, kb.mode, kb.source, budget, currentRoles(), barStyle());
-    const proProfile = kb.connected && boardKey(kb) !== "4753:4003" ? PROFILES[boardKey(kb)] : undefined;
+    const look = computeViaLook(snapshot, kb.mode, kb.source, budget);
+    const proProfile = PROFILES[boardKey(kb)];
     if (proProfile) {
       // 标定板 + Pro 固件:标定视图上逐灯渲染/点选(链序 = profile 中 face=top 灯在前)
       const hidden = proProfile.leds.filter((L) => L.face && L.face !== "top").length;
@@ -178,29 +182,43 @@ function render() {
           sub: hidden > 0
             ? t(`Pro 固件 · 点选/框选灯珠指定职责(另 ${hidden} 颗侧/底灯未显示,默认不参与)`, `Pro firmware · click/drag LEDs to assign roles (+${hidden} side/bottom hidden, unassigned by default)`)
             : t("Pro 固件 · 点选/框选灯珠指定职责", "Pro firmware · click/drag LEDs to assign roles"),
-          look: computeViaLook(snapshot, kb.mode, kb.source, budget),
+          look,
           accent,
           stripCount: 0,
           stripLabel: "",
           profileLeds: proProfile.leds,
           profileKeys: proProfile.layout ? layoutByName(proProfile.layout) : undefined,
           frame,
+          tintKeys: kb.matrix_leds > 0 && !(config.matrix_off?.[boardKey(kb)] ?? false),
           tag: { text: t("PRO · 逐灯", "PRO · PER-LED"), kind: "profile" },
         },
         ledSel
       );
     } else {
-      renderKeyboard($("#preview"), frame, accent, ledSel);
+      // 无标定的 Pro 板:幽灵配列 + 按固件回报灯数画灯带(逐灯可选)
+      const n = kb.led_count || 6;
+      renderUniversalView(
+        $("#preview"),
+        {
+          title: (kb.device_name ?? "KEYBOARD").toUpperCase(),
+          sub: t(`Pro 固件 · 固件报告 ${n} 颗灯 · 点选/框选指定职责(灯位未标定,欢迎提交 profile)`, `Pro firmware · ${n} LEDs reported · click/drag to assign roles (positions uncalibrated — profile PRs welcome)`),
+          look,
+          accent,
+          stripCount: n,
+          stripLabel: `LED ×${n}`,
+          frame,
+          tintKeys: kb.matrix_leds > 0 && !(config.matrix_off?.[boardKey(kb)] ?? false),
+          tag: { text: t("PRO · 逐灯", "PRO · PER-LED"), kind: "profile" },
+        },
+        ledSel
+      );
     }
   } else {
     $("#preview").removeAttribute("data-editable");
     const key = boardKey(kb);
     const dev = LED_DB[key];
     const look = computeViaLook(snapshot, kb.mode, kb.source, budget);
-    if (key === "4753:4003") {
-      // 灯位已知(手工特判):Think 式渲染
-      renderKeyboard($("#preview"), viaLookToFrame(look), look.color ?? accent);
-    } else {
+    {
       // 能力分级:灯位可知(逐键 RGB,坐标来自 QMK)→ 配列上直接画灯;
       // 不可知(灯带/库外板)→ 上层配列 + 下层 LED 区
       const profile = PROFILES[key];
@@ -245,6 +263,9 @@ function render() {
           board: inDb ? dev : undefined,
           look,
           accent,
+          // 有逐键背光区:键帽整板着色一并参与显示
+          tintKeys: kb.zones?.includes("rgb_matrix"),
+          info: true,
           // 有标定 profile:灯画在配列上,不画下层灯带
           stripCount: profile ? 0 : perKey ? 0 : dev?.rl || 6,
           stripLabel: dev?.rl
@@ -308,10 +329,73 @@ function fillSettings() {
   $<HTMLInputElement>("#claude-color").value = state.config.claude_color;
   $<HTMLInputElement>("#codex-color").value = state.config.codex_color;
   $<HTMLInputElement>("#swap-rg").checked = state.config.swap_rg?.[boardKey(state.kb)] ?? false;
+  $<HTMLInputElement>("#matrix-on").checked = !(state.config.matrix_off?.[boardKey(state.kb)] ?? false);
+  $("#matrix-row").hidden = !(state.kb.zones?.includes("rgb_matrix") || state.kb.matrix_leds > 0);
+}
+
+function initInfoModal() {
+  $("#info-title").textContent = t("灯光能力说明", "LIGHTING CAPABILITIES");
+  $("#info-body").innerHTML = t(
+    `<p><b>为什么预览里只有这些灯?</b></p>
+     <p>通用模式(免刷机)通过 VIA 协议控制灯光,能控制哪些灯完全取决于键盘固件暴露了什么:</p>
+     <ul>
+       <li>大多数键盘只把<b>灯条/氛围灯(rgblight)</b>交给 VIA;<b>逐键背光(rgb_matrix)</b>很多固件根本不暴露。例如 Skog Reboot 的原厂固件,92 颗按键背光只能用实体键(F13–F16)控制,任何软件都无法经 VIA 触达。</li>
+       <li>VIA 协议没有灯数、灯位查询,也没有逐灯控制,所以通用模式只能<b>整区同色</b>。预览上的灯位来自社区标定或 QMK 数据库(见标题旁的数据来源标签),不是从键盘上读到的。</li>
+     </ul>
+     <p><b>要控制键盘上的全部灯</b>(含逐键背光、逐灯角色),需要刷入本项目的 <b>Pro 固件</b>(设置 → PRO 区,一键完成,自动备份并写回键位):固件自报灯数、逐灯分配职责、全键背光随用量着色、键盘实体键切换、app 离线 60 秒自动恢复你自己的灯效。</p>
+     <hr/>
+     <p>目前<b>经完整测试并原生支持</b>的键盘:</p>
+     <ul>
+       <li>GrayStudio Think6.5 V3</li>
+       <li>Percent Skog Reboot</li>
+     </ul>
+     <p>其他键盘理论上可用但未经充分测试——欢迎社区标定/适配,或直接提一个 issue 请求支持你的键盘(会自动带上当前键盘的识别信息):</p>
+     <button id="info-issue" type="button">在 GitHub 提 ISSUE →</button>`,
+    `<p><b>Why doesn't the preview show all my lights?</b></p>
+     <p>Universal mode (no flashing) drives lighting through the VIA protocol — what can be controlled is entirely up to what the keyboard's firmware exposes:</p>
+     <ul>
+       <li>Most keyboards only hand their <b>strip/underglow (rgblight)</b> to VIA; <b>per-key backlight (rgb_matrix)</b> is often not exposed at all. On the Skog Reboot's stock firmware, for example, the 92 key backlights are reachable only via hotkeys (F13–F16) — no software can touch them over VIA.</li>
+       <li>VIA has no LED-count or LED-position query and no per-LED control, so universal mode is always <b>one color per zone</b>. LED positions in the preview come from community calibration or the QMK database (see the provenance tag next to the title) — never read from the keyboard.</li>
+     </ul>
+     <p><b>To control every light on the board</b> (per-key backlight, per-LED roles), flash this project's <b>Pro firmware</b> (Settings → PRO, one click, keymap auto-backed-up and restored): the firmware reports its LED count, takes per-LED role assignments, tints the whole backlight with usage, adds keyboard-side switching, and hands your own lighting back 60 s after the app goes offline.</p>
+     <hr/>
+     <p><b>Fully tested, natively supported boards</b>:</p>
+     <ul>
+       <li>GrayStudio Think6.5 V3</li>
+       <li>Percent Skog Reboot</li>
+     </ul>
+     <p>Everything else should work but is not extensively tested — community calibrations are welcome, or file an issue to request support for your board (it pre-fills your keyboard's identifiers):</p>
+     <button id="info-issue" type="button">FILE A GITHUB ISSUE →</button>`
+  );
+  const overlay = $("#info-overlay");
+  $("#preview").addEventListener("click", (e) => {
+    if ((e.target as Element).closest(".pv-info")) overlay.hidden = false;
+  });
+  $("#info-close").addEventListener("click", () => (overlay.hidden = true));
+  $("#info-issue").addEventListener("click", () => {
+    const kb = state?.kb;
+    const title = encodeURIComponent(`Keyboard support: ${kb?.connected ? (kb.device_name ?? "unknown board") : "<your board>"}`);
+    const body = encodeURIComponent(
+      [
+        `**Board**: ${kb?.connected ? (kb.device_name ?? "unknown") : "<name>"}`,
+        `**USB ID**: ${kb?.connected ? boardKey(kb) : "<vid:pid — macOS System Information → USB>"}`,
+        `**Detected zones**: ${kb?.connected ? (kb.zones?.join(", ") || kb.lighting || "none") : "<plug it in and check the status line>"}`,
+        ``,
+        `**What I'd like supported / what looks wrong**:`,
+        ``,
+      ].join("\n")
+    );
+    void openUrl(`https://github.com/siwei-yuan/keytally/issues/new?title=${title}&body=${body}`);
+  });
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) overlay.hidden = true;
+  });
+  if (location.search.includes("info")) overlay.hidden = false; // 调试:?uni&info 直接展开
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
   applyStaticEn();
+  initInfoModal();
   $("#source-seg").addEventListener("click", (e) => {
     const btn = (e.target as HTMLElement).closest("button");
     if (!btn || !state) return;
@@ -332,6 +416,8 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (!state) return;
     const swapMap = { ...(state.config.swap_rg ?? {}) };
     swapMap[boardKey(state.kb)] = $<HTMLInputElement>("#swap-rg").checked;
+    const matrixOffMap = { ...(state.config.matrix_off ?? {}) };
+    matrixOffMap[boardKey(state.kb)] = !$<HTMLInputElement>("#matrix-on").checked;
     invoke("set_config", {
       config: {
         ...state.config, // 保留 led_roles / bar_style 等非表单配置
@@ -342,6 +428,7 @@ window.addEventListener("DOMContentLoaded", async () => {
         claude_color: $<HTMLInputElement>("#claude-color").value,
         codex_color: $<HTMLInputElement>("#codex-color").value,
         swap_rg: swapMap,
+        matrix_off: matrixOffMap,
       },
     });
   });
@@ -366,11 +453,11 @@ window.addEventListener("DOMContentLoaded", async () => {
       kb: ((): KbState => {
         // 浏览器调试:?pro 模拟 Pro 键盘;?uni 模拟库外灯带板(Skog Reboot)
         const q = location.search;
-        const base = { mode: 0, source: 0, connected: false, device_name: null as string | null, backend: null as string | null, lighting: null as string | null, vid: 0x4753, pid: 0x4003, led_count: 0 };
+        const base = { mode: 0, source: 0, connected: false, device_name: null as string | null, backend: null as string | null, lighting: null as string | null, vid: 0x4753, pid: 0x4003, led_count: 0, zones: [] as string[], matrix_leds: 0 };
         if (q.includes("uni"))
-          return { ...base, connected: true, device_name: "PERCENT SKOG REBOOT", backend: "via", lighting: "rgblight", vid: 0x8101, pid: 0x5352, led_count: 0 };
+          return { ...base, connected: true, device_name: "PERCENT SKOG REBOOT", backend: "via", lighting: "rgblight+rgb_matrix", vid: 0x8101, pid: 0x5352, led_count: 0, zones: ["rgblight", "rgb_matrix"] };
         if (q.includes("proskog"))
-          return { ...base, connected: true, device_name: "PERCENT SKOG REBOOT", backend: "pro", lighting: "per-led", vid: 0x8101, pid: 0x5352, led_count: 10 };
+          return { ...base, connected: true, device_name: "PERCENT SKOG REBOOT", backend: "pro", lighting: "per-led", vid: 0x8101, pid: 0x5352, led_count: 10, matrix_leds: 92 };
         if (q.includes("pro"))
           return { ...base, connected: true, device_name: "think65v3", backend: "pro", lighting: "per-led", led_count: 6 };
         return base;

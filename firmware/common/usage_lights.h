@@ -14,6 +14,8 @@
 #define UL_CMD_LED_ROLES 0xC3
 // 进度条样式:data[1] 0=数量(亮灯数=百分比) 1=颜色(全亮,整体绿→红)
 #define UL_CMD_BAR_STYLE 0xC4
+// 全键背光参与:data[1] 0=不参与 1=参与(RAM,默认参与;板子无 rgb_matrix 则忽略)
+#define UL_CMD_MATRIX 0xC5
 #define UL_PROTOCOL_VERSION 1
 #define UL_UNKNOWN 0xFF
 #define UL_TIMEOUT_MS 60000

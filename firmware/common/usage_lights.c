@@ -2,6 +2,9 @@
 #include "usage_lights_config.h"
 #include "raw_hid.h"
 #include "rgblight.h"
+#ifdef RGB_MATRIX_ENABLE
+#    include "rgb_matrix.h"
+#endif
 
 ul_state_t ul_state = {
     .mode   = UL_MODE_QUOTA,
@@ -15,6 +18,8 @@ static const uint8_t default_bar[] = UL_BAR_LEDS;
 static uint8_t led_roles[RGBLIGHT_LED_COUNT];
 static uint8_t bar_style = 0; // 0=数量 1=颜色
 static bool    roles_init = false;
+// 全键背光(rgb_matrix)是否参与显示(0xC5,RAM;无 rgb_matrix 的板子忽略)
+static bool matrix_participate = true;
 
 static void roles_load_default(void) {
     for (uint8_t i = 0; i < RGBLIGHT_LED_COUNT; i++) led_roles[i] = UL_ROLE_NONE;
@@ -53,6 +58,9 @@ static void ul_send_state_report(void) {
     buf[2]          = ul_state.source;
     buf[3]          = UL_PROTOCOL_VERSION;
     buf[4]          = RGBLIGHT_LED_COUNT; // 灯数(编译常量,协议 v1 的空余字节)
+#ifdef RGB_MATRIX_ENABLE
+    buf[5] = RGB_MATRIX_LED_COUNT > 255 ? 255 : RGB_MATRIX_LED_COUNT; // 逐键背光灯数(0=无)
+#endif
     raw_hid_send(buf, sizeof(buf));
 }
 
@@ -89,6 +97,9 @@ void ul_handle_packet(uint8_t *data, uint8_t length) {
             break;
         case UL_CMD_BAR_STYLE:
             bar_style = data[1] == 1 ? 1 : 0;
+            break;
+        case UL_CMD_MATRIX:
+            matrix_participate = data[1] != 0;
             break;
         case UL_CMD_LED_ROLES: {
             if (!roles_init) roles_load_default();
@@ -255,3 +266,50 @@ void ul_task(void) {
             break;
     }
 }
+
+#ifdef RGB_MATRIX_ENABLE
+// ---- 全键背光(rgb_matrix)后端 ----
+// 语义与通用模式的整板着色一致:额度/今日 = 绿→红渐变,活动 = 源色呼吸,
+// 周限额超阈值(额度模式)= 整板 1Hz 闪红;数据无效/超时/关闭参与 = 完全放手。
+// 注意:用户用键盘侧背光开关(如 Skog 的 F13)关掉 rgb_matrix 时本钩子不会被调用,
+// 即键盘侧开关是最高优先级——这与"空闲放手"同属"用户优先"原则。
+bool rgb_matrix_indicators_user(void) {
+    if (!matrix_participate) return true;
+    bool fresh = ul_state.last_packet_time != 0 && timer_elapsed32(ul_state.last_packet_time) < UL_TIMEOUT_MS;
+    if (!fresh) return true;
+    const ul_source_data_t *d = &ul_state.data[ul_state.source];
+    if (!d->valid) return true;
+
+    uint8_t val = rgb_matrix_get_val();
+    if (val < 60) val = 60;
+
+    rgb_t c;
+    switch (ul_state.mode) {
+        case UL_MODE_QUOTA: {
+            uint8_t pct = d->five_hour_pct != UL_UNKNOWN ? d->five_hour_pct : d->weekly_pct;
+            if (pct == UL_UNKNOWN) return true;
+            if (d->weekly_pct != UL_UNKNOWN && d->weekly_pct >= UL_WEEKLY_WARN_PCT && (timer_read32() % 1000) < 500) {
+                c = (rgb_t){.r = val, .g = 0, .b = 0};
+            } else {
+                c = grade_color(pct > 100 ? 100 : pct, val);
+            }
+            break;
+        }
+        case UL_MODE_TODAY:
+            if (d->today_pct == UL_UNKNOWN) return true;
+            c = grade_color(d->today_pct > 100 ? 100 : d->today_pct, val);
+            break;
+        default: { // 活动
+            if (!d->active) return true;
+            const uint8_t *a = accent_rgb[ul_state.source];
+            uint16_t       s = (uint16_t)breathe_scale() * val / 255;
+            c = (rgb_t){.r = (uint8_t)((uint16_t)a[0] * s / 255), .g = (uint8_t)((uint16_t)a[1] * s / 255), .b = (uint8_t)((uint16_t)a[2] * s / 255)};
+            break;
+        }
+    }
+    for (uint8_t i = 0; i < RGB_MATRIX_LED_COUNT; i++) {
+        rgb_matrix_set_color(i, c.r, c.g, c.b);
+    }
+    return false;
+}
+#endif

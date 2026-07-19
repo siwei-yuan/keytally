@@ -22,6 +22,7 @@ Version: 1
 | `0xC2` | app → keyboard | query current state              |
 | `0xC3` | app → keyboard | set LED role table               |
 | `0xC4` | app → keyboard | set bar style                    |
+| `0xC5` | app → keyboard | per-key backlight participation  |
 
 ## 0xC0 — usage data push (app → keyboard)
 
@@ -67,6 +68,7 @@ Sent on keyboard-side key switches and in response to `0xC1`/`0xC2`:
 | 2    | current source (0/1) |
 | 3    | firmware protocol version = `1` |
 | 4    | LED count (`RGBLIGHT_LED_COUNT` compile-time constant; 0 = unknown/older firmware) |
+| 5    | per-key backlight LED count (`RGB_MATRIX_LED_COUNT`, capped at 255; 0 = board has none) |
 
 ## 0xC2 — query state (app → keyboard)
 
@@ -95,6 +97,17 @@ connect (no EEPROM writes). The compile-time table is the factory default.
 |------|---------|
 | 0    | `0xC4` |
 | 1    | 0 = count (number of lit LEDs encodes the percentage), 1 = color (all bar LEDs lit; green→red encodes the percentage) |
+
+## 0xC5 — per-key backlight participation (app → keyboard)
+
+| Byte | Meaning |
+|------|---------|
+| 0    | `0xC5` |
+| 1    | 0 = backlight keeps the user's own effects, 1 = backlight mirrors the usage display (whole-board color, same semantics as universal mode) |
+
+RAM only, defaults to participating; ignored by boards without `rgb_matrix`. The
+keyboard-side backlight toggle (e.g. F13 on the Skog Reboot) always wins: when the
+user turns the backlight off, the firmware leaves it off.
 
 ## Firmware custom keycodes
 

@@ -94,11 +94,4 @@ export function computeViaLook(snap: Snapshot, mode: number, source: number, bud
   return u.active ? { color: accent, blinkWarn: false, breathing: true } : pass;
 }
 
-/// ViaLook → N 颗同色灯帧(通用模式的灯珠视图)
-export function viaLookToFrame(look: ViaLook, n = 6): LedFrame {
-  const base = { blinkAccent: false, accentIdx: [] as number[], blinkAll: false };
-  if (look.color === null) {
-    return { ...base, leds: Array(n).fill(OFF), breathing: false, passthrough: true };
-  }
-  return { ...base, leds: Array(n).fill(look.color), breathing: look.breathing, blinkAll: look.blinkWarn, passthrough: false };
-}
+

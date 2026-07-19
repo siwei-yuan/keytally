@@ -85,6 +85,7 @@
         <label>Claude 活动时灯亮这个颜色 <input id="claude-color" type="color" /></label>
         <label>Codex 活动时灯亮这个颜色 <input id="codex-color" type="color" /></label>
         <label>本键盘红绿互换(修正 GRB 灯带发色相反) <input id="swap-rg" type="checkbox" /></label>
+        <label id="matrix-row" hidden>全键背光参与显示 <input id="matrix-on" type="checkbox" /></label>
         <button id="save-config">保存</button>
 
         <div class="pro">
@@ -104,5 +105,11 @@
         </div>
       </details>
     </main>
+    <div id="info-overlay" hidden>
+      <div id="info-modal">
+        <div class="info-head"><span id="info-title">灯光能力说明</span><button id="info-close" type="button">✕</button></div>
+        <div id="info-body"></div>
+      </div>
+    </div>
   </body>
 </html>

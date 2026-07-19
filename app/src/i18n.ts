@@ -33,6 +33,7 @@ export function applyStaticEn() {
     "Claude activity color",
     "Codex activity color",
     "Swap red/green on this keyboard (GRB strip fix)",
+    "Show usage on per-key backlight",
   ];
   labels.forEach((l, i) => {
     if (lt[i]) l.childNodes[0]!.textContent = lt[i] + " ";

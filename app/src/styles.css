@@ -206,5 +206,49 @@ header { display: flex; align-items: center; gap: 8px; color: var(--muted); font
 .pv-tag-db { background: #2e7d3a; color: #eafbe7; }
 .pv-tag-probe { background: #3a3d44; color: #b9b6ae; }
 
+.settings label[hidden] { display: none; }
+
 /* 未检测到键盘:预览整块淡化置灰 */
 #preview[data-offline] { opacity: 0.45; filter: grayscale(1); }
+
+/* 灯光能力说明:ⓘ 按钮 + 弹层 */
+.pv-info {
+  margin-left: 8px; width: 16px; height: 16px; flex-shrink: 0;
+  border: none; border-radius: 50%; background: var(--accent);
+  color: #0f1013; font: italic 700 11px/1 Georgia, serif;
+  cursor: pointer; display: inline-grid; place-content: center; padding: 0;
+}
+.pv-info:hover { background: #ff7f2e; box-shadow: 0 0 8px #e8641b88; }
+#info-overlay {
+  position: fixed; inset: 0; z-index: 40;
+  background: #000000a8; display: flex; align-items: center; justify-content: center;
+}
+#info-overlay[hidden] { display: none; }
+#info-modal {
+  width: min(560px, calc(100vw - 48px)); max-height: 80vh; overflow-y: auto;
+  background: #101115; border: 1px solid var(--hairline); border-radius: 3px;
+  box-shadow: 0 12px 48px #000c;
+}
+.info-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--hairline);
+  letter-spacing: 3px; font-size: 11px; text-transform: uppercase; color: var(--text);
+}
+.info-head button {
+  background: transparent; border: none; color: var(--muted); font-size: 14px;
+  cursor: pointer; padding: 2px 6px;
+}
+.info-head button:hover { color: var(--accent); }
+#info-body { padding: 14px 16px 18px; color: var(--text); font-size: 12px; line-height: 1.8; }
+#info-body p { margin: 8px 0; }
+#info-body ul { margin: 8px 0; padding-left: 18px; color: var(--muted); }
+#info-body li { margin: 6px 0; }
+#info-body b { color: var(--accent); font-weight: 600; }
+
+#info-body hr { border: none; border-top: 1px dashed var(--hairline); margin: 12px 0; }
+#info-issue {
+  margin-top: 4px; background: transparent; border: 1px solid var(--accent); border-radius: 2px;
+  color: var(--accent); padding: 7px 18px; font: inherit; font-size: 11px;
+  letter-spacing: 2px; cursor: pointer;
+}
+#info-issue:hover { background: var(--accent); color: #0f1013; }

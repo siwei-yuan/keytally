@@ -101,5 +101,6 @@ export const GHOST_DEFAULT = GHOST_TKL;
 
 /// profile 的 layout 字段 → 标准模板
 export function layoutByName(name: string): GhostKey[] | undefined {
+  if (name === "think65") return KEYS_THINK65.map((k): GhostKey => [k.x, k.y, k.w, k.label]);
   return { "60": GHOST_60, "65": GHOST_65, "tkl87": GHOST_TKL, "96": GHOST_96, "104": ghost104() }[name];
 }

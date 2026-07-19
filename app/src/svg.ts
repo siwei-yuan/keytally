@@ -94,11 +94,13 @@ export function cornerBrackets(x: number, y: number, w: number, h: number, accen
 }
 
 /// 键组的外接尺寸(键距单位)
-export function keysExtent(keys: readonly (readonly number[])[]): { maxX: number; maxY: number } {
+export function keysExtent(keys: readonly (readonly (number | string | undefined)[])[]): { maxX: number; maxY: number } {
   let maxX = 1, maxY = 1;
   for (const k of keys) {
-    maxX = Math.max(maxX, k[0] + k[2]);
-    maxY = Math.max(maxY, k[1] + (k[3] ?? 1));
+    maxX = Math.max(maxX, (k[0] as number) + (k[2] as number));
+    // 第 4 位:BoardData 是高度(数字),GhostKey 是键帽标注(字符串)
+    const h = typeof k[3] === "number" ? k[3] : 1;
+    maxY = Math.max(maxY, (k[1] as number) + h);
   }
   return { maxX, maxY };
 }

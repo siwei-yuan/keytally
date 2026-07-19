@@ -49,6 +49,32 @@ pub fn pro_firmware(vid: u16, pid: u16) -> Option<FlashJob> {
     }
 }
 
+/// 按板选择 DFU 探测方式:AVR 板用 dfu-programmer 探芯片,其余用 dfu-util 列举
+pub fn wait_for_dfu_board(vid: u16, pid: u16, timeout: Duration) -> Result<(), String> {
+    match (vid, pid) {
+        (0x8101, 0x5352) => wait_for_avr_dfu(&["at90usb646", "at90usb1286"], timeout),
+        _ => wait_for_dfu(timeout),
+    }
+}
+
+fn wait_for_avr_dfu(mcus: &[&str], timeout: Duration) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        for mcu in mcus {
+            let ok = Command::new(DFU_PROGRAMMER)
+                .args([mcu, "get", "bootloader-version"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if ok {
+                return Ok(());
+            }
+        }
+        std::thread::sleep(Duration::from_millis(700));
+    }
+    Err("等待 DFU 设备超时(键盘未进入 bootloader)".into())
+}
+
 pub fn wait_for_dfu(timeout: Duration) -> Result<(), String> {
     let deadline = std::time::Instant::now() + timeout;
     while std::time::Instant::now() < deadline {

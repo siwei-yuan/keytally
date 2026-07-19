@@ -15,6 +15,8 @@ pub const USAGE: u16 = 0x61;
 /// 通用模式下的目标灯效(由 lib.rs 从 snapshot+模式+数据源算出)
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ViaLook {
+    /// 该板配置了「逐键背光不参与显示」
+    pub matrix_off: bool,
     pub hue: u8, // QMK 0-255 色环
     pub sat: u8,
     pub blink_warn: bool,  // 1Hz 红色告警闪烁
@@ -31,6 +33,8 @@ pub struct Frame {
 }
 
 pub enum Cmd {
+    /// Pro:全键背光是否参与显示(0xC5)
+    SetMatrixOn(bool),
     Frame(Frame),
     /// 仅 Pro 后端有键盘侧状态;VIA 后端忽略
     SetState { mode: Option<u8>, source: Option<u8> },
@@ -121,10 +125,10 @@ fn via_restore_keymap(dev: &hidapi::HidDevice, data: &[u8]) -> Result<(), String
 }
 
 pub enum Event {
-    Connected { name: Option<String>, backend: &'static str, lighting: &'static str, vid: u16, pid: u16 },
+    Connected { name: Option<String>, backend: &'static str, lighting: &'static str, zones: Vec<&'static str>, vid: u16, pid: u16 },
     Disconnected,
-    /// Pro 固件状态回报 (mode, source, led_count[0=未知,旧固件])
-    State(u8, u8, u8),
+    /// Pro 固件状态回报 (mode, source, led_count[0=未知,旧固件], matrix_leds[0=无逐键背光])
+    State(u8, u8, u8, u8),
 }
 
 #[derive(Clone, Copy)]
@@ -135,11 +139,22 @@ struct SavedLighting {
     color: (u8, u8),
 }
 
+/// 一个可独立驱动的灯光区(灯条/氛围灯 或 逐键背光)
+#[derive(Clone, Copy)]
+struct Zone {
+    v3: bool,
+    /// v3: custom channel(rgblight=2 / rgb_matrix=3);v2 无意义
+    channel: u8,
+    /// true = 逐键背光(rgb_matrix);false = 灯条/氛围灯(rgblight)
+    matrix: bool,
+    saved: SavedLighting,
+}
+
 #[derive(Clone, Copy)]
 enum Backend {
     Pro,
-    /// v3: 走 custom channel(rgblight=2 / rgb_matrix=3);v2: channel 无意义
-    Via { v3: bool, channel: u8, saved: SavedLighting },
+    /// 一块板最多两个灯光区(灯条 + 逐键背光),同时驱动、各自保存/还原
+    Via { zones: [Option<Zone>; 2] },
 }
 
 pub fn spawn(rx: Receiver<Cmd>, on_event: impl Fn(Event) + Send + 'static) {
@@ -193,8 +208,9 @@ fn probe(dev: &hidapi::HidDevice) -> Option<Backend> {
     let ver = handled(xfer(dev, &[0x01], 1))?;
     let version = u16::from_be_bytes([ver[1], ver[2]]);
     if version >= 12 {
-        // V3:探测 rgblight(ch2)→ rgb_matrix(ch3)
-        for ch in [2u8, 3u8] {
+        // V3:rgblight(ch2)与 rgb_matrix(ch3)独立探测,可并存(如 Skog:灯条+92 键背光)
+        let mut zones: [Option<Zone>; 2] = [None, None];
+        for (i, ch) in [2u8, 3u8].into_iter().enumerate() {
             if handled(xfer(dev, &[0x08, ch, 1], 3)).is_some() {
                 let get = |vid: u8| handled(xfer(dev, &[0x08, ch, vid], 3));
                 let saved = SavedLighting {
@@ -203,11 +219,14 @@ fn probe(dev: &hidapi::HidDevice) -> Option<Backend> {
                     speed: get(3).map_or(128, |b| b[3]),
                     color: get(4).map_or((0, 255), |b| (b[3], b[4])),
                 };
-                return Some(Backend::Via { v3: true, channel: ch, saved });
+                zones[i] = Some(Zone { v3: true, channel: ch, matrix: ch == 3, saved });
             }
         }
+        if zones.iter().any(Option::is_some) {
+            return Some(Backend::Via { zones });
+        }
     } else {
-        // V2:rgblight 值域 0x80-0x83
+        // V2:单一 rgblight 值域 0x80-0x83,视作一个灯条区
         if handled(xfer(dev, &[0x08, 0x80], 2)).is_some() {
             let get = |vid: u8| handled(xfer(dev, &[0x08, vid], 2));
             let saved = SavedLighting {
@@ -216,7 +235,7 @@ fn probe(dev: &hidapi::HidDevice) -> Option<Backend> {
                 speed: get(0x82).map_or(128, |b| b[2]),
                 color: get(0x83).map_or((0, 255), |b| (b[2], b[3])),
             };
-            return Some(Backend::Via { v3: false, channel: 0, saved });
+            return Some(Backend::Via { zones: [Some(Zone { v3: false, channel: 0, matrix: false, saved }), None] });
         }
     }
     None
@@ -224,34 +243,30 @@ fn probe(dev: &hidapi::HidDevice) -> Option<Backend> {
 
 // ---- VIA 灯光写入(不带 save,断电/重启即还原) ----
 
-fn via_set(dev: &hidapi::HidDevice, be: &Backend, value_id_v3: u8, value_id_v2: u8, data: &[u8]) {
-    if let Backend::Via { v3, channel, .. } = be {
-        let mut req = Vec::with_capacity(6);
-        req.push(0x07);
-        if *v3 {
-            req.push(*channel);
-            req.push(value_id_v3);
-        } else {
-            req.push(value_id_v2);
-        }
-        req.extend_from_slice(data);
-        let _ = write_packet(dev, &req);
+fn via_set(dev: &hidapi::HidDevice, z: &Zone, value_id_v3: u8, value_id_v2: u8, data: &[u8]) {
+    let mut req = Vec::with_capacity(6);
+    req.push(0x07);
+    if z.v3 {
+        req.push(z.channel);
+        req.push(value_id_v3);
+    } else {
+        req.push(value_id_v2);
     }
+    req.extend_from_slice(data);
+    let _ = write_packet(dev, &req);
 }
 
-fn via_apply(dev: &hidapi::HidDevice, be: &Backend, h: u8, s: u8, v: u8) {
-    via_set(dev, be, 2, 0x81, &[1]); // effect = solid color
-    via_set(dev, be, 1, 0x80, &[v]);
-    via_set(dev, be, 4, 0x83, &[h, s]);
+fn via_apply(dev: &hidapi::HidDevice, z: &Zone, h: u8, s: u8, v: u8) {
+    via_set(dev, z, 2, 0x81, &[1]); // effect = solid color
+    via_set(dev, z, 1, 0x80, &[v]);
+    via_set(dev, z, 4, 0x83, &[h, s]);
 }
 
-fn via_restore(dev: &hidapi::HidDevice, be: &Backend) {
-    if let Backend::Via { saved, .. } = be {
-        via_set(dev, be, 2, 0x81, &[saved.effect]);
-        via_set(dev, be, 3, 0x82, &[saved.speed]);
-        via_set(dev, be, 1, 0x80, &[saved.brightness]);
-        via_set(dev, be, 4, 0x83, &[saved.color.0, saved.color.1]);
-    }
+fn via_restore_zone(dev: &hidapi::HidDevice, z: &Zone) {
+    via_set(dev, z, 2, 0x81, &[z.saved.effect]);
+    via_set(dev, z, 3, 0x82, &[z.saved.speed]);
+    via_set(dev, z, 1, 0x80, &[z.saved.brightness]);
+    via_set(dev, z, 4, 0x83, &[z.saved.color.0, z.saved.color.1]);
 }
 
 /// 2.2s 三角波(45%-100%),与 Pro 固件呼吸一致
@@ -277,8 +292,8 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
     let mut conn: Option<(hidapi::HidDevice, Backend)> = None;
     let mut last_scan = Instant::now() - Duration::from_secs(60);
     let mut frame: Option<Frame> = None;
-    let mut taken_over = false; // VIA 后端:当前是否接管着灯效
-    let mut last_applied: Option<(u8, u8, u8)> = None;
+    let mut taken: [bool; 2] = [false; 2]; // VIA 后端:每个灯光区是否被接管
+    let mut applied: [Option<(u8, u8, u8)>; 2] = [None; 2];
     let start = Instant::now();
 
     loop {
@@ -294,20 +309,31 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
             if let Some(a) = &api {
                 if let Some((dev, name, vid, pid)) = find_device(a) {
                     if let Some(be) = probe(&dev) {
-                        let (backend, lighting) = match be {
-                            Backend::Pro => ("pro", "per-led"),
-                            Backend::Via { v3: true, channel: 3, .. } => ("via", "rgb_matrix"),
-                            Backend::Via { .. } => ("via", "rgblight"),
+                        let (backend, lighting, zone_names) = match &be {
+                            Backend::Pro => ("pro", "per-led", Vec::new()),
+                            Backend::Via { zones } => {
+                                let names: Vec<&'static str> = zones
+                                    .iter()
+                                    .flatten()
+                                    .map(|z| if z.matrix { "rgb_matrix" } else { "rgblight" })
+                                    .collect();
+                                let lighting = match names.as_slice() {
+                                    ["rgblight", "rgb_matrix"] => "rgblight+rgb_matrix",
+                                    ["rgb_matrix"] => "rgb_matrix",
+                                    _ => "rgblight",
+                                };
+                                ("via", lighting, names)
+                            }
                         };
                         if matches!(be, Backend::Pro) {
                             if let Some(f) = &frame {
                                 let _ = write_packet(&dev, &f.pro);
                             }
                         }
-                        taken_over = false;
-                        last_applied = None;
+                        taken = [false; 2];
+                        applied = [None; 2];
                         conn = Some((dev, be));
-                        on_event(Event::Connected { name, backend, lighting, vid, pid });
+                        on_event(Event::Connected { name, backend, lighting, zones: zone_names, vid, pid });
                     }
                 }
             }
@@ -351,6 +377,13 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                         None => Err("keyboard not connected".into()),
                     };
                     let _ = reply.send(r);
+                }
+                Cmd::SetMatrixOn(on) => {
+                    if let Some((dev, Backend::Pro)) = &conn {
+                        if !write_packet(dev, &[0xC5, on as u8]) {
+                            drop_dev = true;
+                        }
+                    }
                 }
                 Cmd::SetLedRoles(roles, style) => {
                     if let Some((dev, Backend::Pro)) = &conn {
@@ -411,31 +444,34 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
             }
         }
         if shutdown {
-            if let Some((dev, be)) = &conn {
-                if taken_over {
-                    via_restore(dev, be);
+            if let Some((dev, Backend::Via { zones })) = &conn {
+                for (i, z) in zones.iter().enumerate() {
+                    if let (Some(z), true) = (z, taken[i]) {
+                        via_restore_zone(dev, z);
+                    }
                 }
             }
             return;
         }
 
-        // ---- VIA 后端渲染 tick ----
-        if let (Some((dev, be @ Backend::Via { .. })), Some(f)) = (&conn, &frame) {
+        // ---- VIA 后端渲染 tick:逐灯光区驱动(灯条与逐键背光同时支持,各自独立)----
+        if let (Some((dev, Backend::Via { zones })), Some(f)) = (&conn, &frame) {
             let look = f.via;
-            if look.passthrough {
-                if taken_over {
-                    via_restore(dev, be);
-                    taken_over = false;
-                    last_applied = None;
+            let t = start.elapsed().as_millis();
+            for (i, z) in zones.iter().enumerate() {
+                let Some(z) = z else { continue };
+                // 整体放手,或该板配置了「背光不参与」
+                let released = look.passthrough || (z.matrix && look.matrix_off);
+                if released {
+                    if taken[i] {
+                        via_restore_zone(dev, z);
+                        taken[i] = false;
+                        applied[i] = None;
+                    }
+                    continue;
                 }
-            } else {
-                let saved_v = match be {
-                    Backend::Via { saved, .. } => saved.brightness.max(60),
-                    _ => 128,
-                };
-                let t = start.elapsed().as_millis();
                 let (mut h, mut s) = (look.hue, look.sat);
-                let mut v = saved_v as u32;
+                let mut v = z.saved.brightness.max(60) as u32;
                 if look.breathing {
                     v = v * breathe_scale(t) / 255;
                 }
@@ -443,15 +479,16 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                     h = 0;
                     s = 255;
                 }
-                if look.swap_rg {
+                if look.swap_rg && !z.matrix {
+                    // WS2812 字节序 quirk 只影响灯条区(IS31 背光颜色本就正确)。
                     // R/G 互换等价于色相绕 60°(QMK 色环 85/2 处)反射:h' = 85 - h
                     h = 85u8.wrapping_sub(h);
                 }
                 let hsv = (h, s, v.min(255) as u8);
-                if !taken_over || last_applied != Some(hsv) {
-                    via_apply(dev, be, hsv.0, hsv.1, hsv.2);
-                    taken_over = true;
-                    last_applied = Some(hsv);
+                if !taken[i] || applied[i] != Some(hsv) {
+                    via_apply(dev, z, hsv.0, hsv.1, hsv.2);
+                    taken[i] = true;
+                    applied[i] = Some(hsv);
                 }
             }
         }
@@ -463,7 +500,7 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                 let timeout = if matches!(be, Backend::Via { .. }) { 100 } else { 200 };
                 match dev.read_timeout(&mut buf, timeout) {
                     Ok(n) if n > 0 && buf[0] == CMD_STATE && matches!(be, Backend::Pro) => {
-                        on_event(Event::State(buf[1], buf[2], buf[4]));
+                        on_event(Event::State(buf[1], buf[2], buf[4], buf[5]));
                     }
                     Ok(_) => {}
                     Err(_) => drop_dev = true,
@@ -475,8 +512,8 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
 
         if drop_dev {
             conn = None;
-            taken_over = false;
-            last_applied = None;
+            taken = [false; 2];
+            applied = [None; 2];
             on_event(Event::Disconnected);
         }
     }

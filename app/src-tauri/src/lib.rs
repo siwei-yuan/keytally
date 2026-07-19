@@ -21,6 +21,9 @@ pub struct AppConfig {
     pub bar_style: u8,
     /// vid:pid → 红绿互换(修正 GRB 字节序接反的灯带固件,如 BIOI)
     pub swap_rg: std::collections::HashMap<String, bool>,
+    /// 按板("vid:pid")配置:通用模式下逐键背光不参与显示
+    #[serde(default)]
+    pub matrix_off: std::collections::HashMap<String, bool>,
     /// 周限额告警阈值(%)
     pub warn_threshold: u8,
     /// 额度模式指标:0=5h 优先,1=周优先,2=两者取大
@@ -41,6 +44,7 @@ impl Default for AppConfig {
             led_roles: Default::default(),
             bar_style: 0,
             swap_rg: Default::default(),
+            matrix_off: Default::default(),
         }
     }
 }
@@ -59,6 +63,11 @@ pub struct KbState {
     pub pid: u16,
     /// Pro 固件回报的灯数(0 = 未知/非 Pro)
     pub led_count: u8,
+    /// 通用模式探测到的灯光区能力表("rgblight" / "rgb_matrix",可并存)
+    #[serde(default)]
+    pub zones: Vec<String>,
+    /// Pro 固件回报的逐键背光灯数(0 = 无)
+    pub matrix_leds: u8,
 }
 
 /// "#RRGGBB" → QMK (hue, sat),解析失败用 Claude 默认色
@@ -80,12 +89,10 @@ fn hex_to_hs(hex: &str) -> (u8, u8) {
 
 /// 与 app 预览、Pro 固件一致的映射:模式+数据源 → 整板颜色
 fn compute_via_look(snap: &Snapshot, kb: &KbState, cfg: &AppConfig) -> hid::ViaLook {
-    let swap = *cfg
-        .swap_rg
-        .get(&format!("{:04x}:{:04x}", kb.vid, kb.pid))
-        .unwrap_or(&false);
+    let key = format!("{:04x}:{:04x}", kb.vid, kb.pid);
     let mut look = compute_via_look_inner(snap, kb, cfg);
-    look.swap_rg = swap;
+    look.swap_rg = *cfg.swap_rg.get(&key).unwrap_or(&false);
+    look.matrix_off = *cfg.matrix_off.get(&key).unwrap_or(&false);
     look
 }
 
@@ -255,13 +262,20 @@ fn backup_keymap(app: tauri::State<Arc<App>>) -> Result<String, String> {
     Ok(path.display().to_string())
 }
 
-/// 软件跳转优先;失败则临时把 layer1 Esc 写成 QK_BOOT 让用户按 Fn+Esc
-fn enter_bootloader_with_fallback(app: &Arc<App>, emit: &dyn Fn(&str)) -> Result<(), String> {
+/// 软件跳转优先;失败按板回退:Skog 用官方 Esc 插线法,其余临时写 QK_BOOT 让用户按 Fn+Esc
+fn enter_bootloader_with_fallback(app: &Arc<App>, emit: &dyn Fn(&str), vid: u16, pid: u16) -> Result<(), String> {
     emit("尝试软件进入 bootloader…");
     let _ = app.hid_tx.send(hid::Cmd::BootloaderJump);
     std::thread::sleep(Duration::from_secs(2));
-    if flash::wait_for_dfu(Duration::from_secs(8)).is_ok() {
+    if flash::wait_for_dfu_board(vid, pid, Duration::from_secs(8)).is_ok() {
         return Ok(());
+    }
+    if (vid, pid) == (0x8101, 0x5352) {
+        // 原厂 v1.2 固件是 2021 年 QMK:不响应 0x0B,QK_BOOT(0x7C00)键码也不存在
+        // (当年叫 RESET/0x5C00)。官方硬方法 100% 可用:按住 Esc 插线。
+        emit("固件不响应软件跳转。请手动进入刷机模式:① 关掉板上电源开关 ② 拔掉 USB 线 ③ 按住 Esc 重新插线,保持 2 秒(等待 180 秒)…");
+        return flash::wait_for_dfu_board(vid, pid, Duration::from_secs(180))
+            .map_err(|e| format!("{e};最后手段:PCB 上标 RESET 的实体按钮"));
     }
     emit("固件不响应软件跳转,改用按键方案…");
     std::thread::sleep(Duration::from_secs(4)); // 等 HID 线程重连
@@ -299,7 +313,7 @@ fn restore_stock(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resul
         if let Some((k, m)) = &backup {
             let _ = write_backup(&app, k, m);
         }
-        if let Err(e) = enter_bootloader_with_fallback(&app, &emit) {
+        if let Err(e) = enter_bootloader_with_fallback(&app, &emit, vid, pid) {
             return emit(&format!("❌ {e}"));
         }
         emit("② 刷入还原固件…");
@@ -360,7 +374,7 @@ fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resu
             Err(e) => return fail(format!("备份失败,中止:{e}")),
         };
         emit("②/③ 进入 bootloader…");
-        if let Err(e) = enter_bootloader_with_fallback(&app, &emit) {
+        if let Err(e) = enter_bootloader_with_fallback(&app, &emit, vid, pid) {
             return fail(e);
         }
         // 芯片固件读出仅 STM32 路径支持;AVR 板(如 Skog)以官方发布固件作为还原目标
@@ -421,9 +435,19 @@ fn set_kb_state(app: tauri::State<Arc<App>>, mode: Option<u8>, source: Option<u8
 
 #[tauri::command]
 fn set_config(app: tauri::State<Arc<App>>, handle: tauri::AppHandle, config: AppConfig) {
-    {
+    let matrix_on = {
         let mut sh = app.shared.lock().unwrap();
         sh.config = config.clone();
+        // Pro 键盘:同步全键背光参与开关到固件(0xC5)
+        if sh.kb.connected && sh.kb.backend.as_deref() == Some("pro") {
+            let key = format!("{:04x}:{:04x}", sh.kb.vid, sh.kb.pid);
+            Some(!*sh.config.matrix_off.get(&key).unwrap_or(&false))
+        } else {
+            None
+        }
+    };
+    if let Some(on) = matrix_on {
+        let _ = app.hid_tx.send(hid::Cmd::SetMatrixOn(on));
     }
     if let Some(dir) = app.config_path.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -582,26 +606,32 @@ pub fn run() {
                     {
                         let mut sh = app.shared.lock().unwrap();
                         match ev {
-                            hid::Event::Connected { name, backend, lighting, vid, pid } => {
+                            hid::Event::Connected { name, backend, lighting, zones, vid, pid } => {
                                 sh.kb.connected = true;
                                 sh.kb.device_name = name;
                                 sh.kb.backend = Some(backend.to_string());
                                 sh.kb.lighting = Some(lighting.to_string());
+                                sh.kb.zones = zones.iter().map(|z| z.to_string()).collect();
                                 sh.kb.vid = vid;
                                 sh.kb.pid = pid;
                                 if backend == "pro" {
                                     let roles = roles_for(&sh.config, vid, pid);
                                     let style = sh.config.bar_style;
                                     let _ = app.hid_tx.send(hid::Cmd::SetLedRoles(roles, style));
+                                    let key = format!("{vid:04x}:{pid:04x}");
+                                    let m_off = *sh.config.matrix_off.get(&key).unwrap_or(&false);
+                                    let _ = app.hid_tx.send(hid::Cmd::SetMatrixOn(!m_off));
                                 }
                             }
                             hid::Event::Disconnected => {
                                 sh.kb.connected = false;
                                 sh.kb.backend = None;
+                                sh.kb.zones.clear();
                             }
-                            hid::Event::State(m, s, n) => {
+                            hid::Event::State(m, s, n, mx) => {
                                 sh.kb.mode = m;
                                 sh.kb.source = s;
+                                sh.kb.matrix_leds = mx;
                                 if n > 0 {
                                     sh.kb.led_count = n;
                                 }

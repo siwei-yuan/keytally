@@ -23,6 +23,10 @@ export interface KbState {
   vid: number;
   pid: number;
   led_count: number; // Pro 固件回报;0 = 未知
+  /// 通用模式探测到的灯光区能力表("rgblight" / "rgb_matrix",可并存)
+  zones: string[];
+  /// Pro 固件回报的逐键背光灯数(0 = 无)
+  matrix_leds: number;
 }
 
 export interface AppConfig {
@@ -35,6 +39,8 @@ export interface AppConfig {
   led_roles?: Record<string, number[]>;
   bar_style?: number;
   swap_rg?: Record<string, boolean>;
+  /// 按板:通用模式下逐键背光不参与显示
+  matrix_off?: Record<string, boolean>;
 }
 
 export interface FullState {
@@ -79,4 +85,4 @@ export interface LedFrame {
   passthrough: boolean;
 }
 
-export type GhostKey = [number, number, number]; // x, y, w
+export type GhostKey = [number, number, number, string?]; // x, y, w, 键帽标注(可选)

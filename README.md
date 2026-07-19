@@ -115,6 +115,11 @@ Roles persist per keyboard and re-apply on every connect.
 
 **Everything else**: universal mode is designed to work on any VIA-enabled keyboard with lights, and the preview falls back to the QMK database (2,677 boards by VID/PID) or a key-count probe — but boards beyond the two above **have not been extensively tested; exact behavior is unknown** until someone calibrates and verifies them. The UI never bluffs about this: every preview carries a provenance tag — `CALIBRATED · JSON` (orange), `QMK DATABASE` (green), or `PROBED · SKETCH` (gray).
 
+Want your board supported? Two ways:
+
+- **Contribute** — calibrate it yourself in ~2 minutes ([guide below](#add-your-keyboard-community)) and PR the JSON, or go all the way to a Pro firmware port.
+- **Ask** — [file a "Keyboard support" issue](https://github.com/siwei-yuan/keytally/issues/new?title=Keyboard%20support%3A%20) with your board name and USB ID (the in-app ⓘ popover has a button that pre-fills this for you).
+
 ## Add your keyboard (community)
 
 Two tiers. Both start with your board's USB IDs: macOS System Information → USB → your keyboard → *Vendor ID / Product ID* (4-digit lowercase hex, e.g. `8101:5352`).

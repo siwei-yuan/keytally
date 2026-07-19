@@ -41,7 +41,10 @@ if [ -d "$QMK_BIOI" ]; then
     cp "$REPO"/firmware/skog_reboot/* "$SKOG_KM_DIR/"
     cp "$REPO"/firmware/common/usage_lights.{c,h} "$SKOG_KM_DIR/"
     # rev_a = at90usb646 / rev_b = at90usb1286(刷机时由 dfu-programmer 探测芯片选用)
-    make -C "$QMK_BIOI" "bioi/skog_reboot/rev_a:$KM" "bioi/skog_reboot/rev_b:$KM"
+    # 老树的增量构建偶发 LTO "-mmcu more than once",清目标缓存保证确定性
+    rm -rf "$QMK_BIOI"/.build/obj_bioi_skog_reboot_rev_{a,b}_"$KM"
+    make -C "$QMK_BIOI" "bioi/skog_reboot/rev_a:$KM"
+    make -C "$QMK_BIOI" "bioi/skog_reboot/rev_b:$KM"
 else
     echo "跳过 Skog Reboot:未找到 $QMK_BIOI(git clone -b update-and-add-bioi-keyboards https://github.com/scottywei/qmk_firmware \"\$HOME/qmk_firmware-bioi\")"
 fi

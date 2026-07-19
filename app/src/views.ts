@@ -1,10 +1,9 @@
 // 预览视图:全部基于 svg.ts 原语组装,不重复任何标记。
 
-import { KEYS_THINK65, GHOST_DEFAULT } from "./layouts";
-import { animCls, cornerBrackets, keyRect, keysExtent, ledDot, svgWrap, OFF, INVALID } from "./svg";
+import { GHOST_DEFAULT } from "./layouts";
+import { animCls, cornerBrackets, keyRect, keysExtent, ledDot, svgWrap, OFF } from "./svg";
 import type { BoardData, GhostKey, LedFrame, ViaLook } from "./types";
 
-const U_THINK = 40;
 const U_BOARD = 34;
 
 function frameCls(f: LedFrame, i: number): string {
@@ -13,43 +12,6 @@ function frameCls(f: LedFrame, i: number): string {
     blink: (f.accentIdx.includes(i) && f.blinkAccent) || f.blinkAll,
     passthrough: f.passthrough,
   });
-}
-
-// ---- Think6.5 V3:手工标定的徽章视图(Pro 参考板) ----
-
-const BADGE = { x: 15, y: 2, cols: 2, colGap: 14, rowGap: 22, topPad: 16 };
-
-export function renderKeyboard(el: HTMLElement, frame: LedFrame, accent: string, selected?: Set<number>) {
-  const u = U_THINK, gap = 4;
-  const w = 16 * u + 14; // 右侧留白容纳括号
-  const h = 5 * u;
-
-  const keys = KEYS_THINK65.map((k) => keyRect({ ...k, u, gap, pad: 0, style: "solid" })).join("");
-
-  const bx = BADGE.x * u + gap / 2, by = BADGE.y * u + gap / 2;
-  const bw = u - gap, bh = 2 * u - gap;
-  const badge =
-    cornerBrackets(bx, by, bw, bh, accent, 6, 10) +
-    `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="5" fill="#0c0d10" stroke="#ffffff22"/>` +
-    `<text x="${bx + bw / 2}" y="${by + bh + 22}" text-anchor="middle" style="fill:${accent};letter-spacing:2px;font-size:9px">LED</text>`;
-
-  const leds = frame.leds
-    .map((color, i) =>
-      ledDot({
-        cx: BADGE.x * u + u / 2 + ((i % BADGE.cols) - 0.5) * BADGE.colGap,
-        cy: BADGE.y * u + BADGE.topPad + Math.floor(i / BADGE.cols) * BADGE.rowGap,
-        r: 6,
-        color,
-        cls: frameCls(frame, i),
-        glow: !frame.passthrough && color !== OFF && color !== INVALID,
-        idx: i,
-        selected: selected?.has(i),
-        accent,
-      })
-    )
-    .join("");
-
-  el.innerHTML = svgWrap(w, h, keys + badge + leds, accent);
 }
 
 // ---- 通用模式统一视图:标题 + 配列(上)+ LED 区(下) ----
@@ -68,6 +30,10 @@ export interface UniversalViewOpts {
   profileKeys?: GhostKey[];
   /// Pro 固件:逐灯帧(索引 = 链上索引;标定 profile 须把 face=top 的灯排在链序前列)
   frame?: LedFrame;
+  /// 板上有逐键背光区(rgb_matrix)→ 键帽整板着色参与显示
+  tintKeys?: boolean;
+  /// 标题行显示 ⓘ 按钮(点开灯光能力说明弹层;通用模式用)
+  info?: boolean;
   tag?: { text: string; kind: string };
 }
 
@@ -99,9 +65,12 @@ function profileDots(o: UniversalViewOpts, cls: string, pad: number, selected?: 
   return cornerBrackets(x1, y1, bw, bh, o.accent, 4, 8) + label + dots;
 }
 
-/// 画布高度需容纳超出键区的标定灯珠(如板底 logo 灯)
+/// 画布需容纳超出键区的标定灯珠(如板底 logo 灯、键区右侧的徽章灯)
 function ledMaxY(o: UniversalViewOpts): number {
   return Math.max(0, ...(o.profileLeds ?? []).filter((L) => !L.face || L.face === "top").map((L) => L.y + 0.35));
+}
+function ledMaxX(o: UniversalViewOpts): number {
+  return Math.max(0, ...(o.profileLeds ?? []).filter((L) => !L.face || L.face === "top").map((L) => L.x + 0.6));
 }
 
 function boardSvg(o: UniversalViewOpts, cls: string, selected?: Set<number>): string {
@@ -111,9 +80,10 @@ function boardSvg(o: UniversalViewOpts, cls: string, selected?: Set<number>): st
     const ext = keysExtent(b.keys);
     const maxY = Math.max(ext.maxY, ledMaxY(o));
     const perKey = b.leds.length > 0;
+    const tint = perKey || !!o.tintKeys;
     const keys = b.keys
       .map(([x, y, w, h]) =>
-        keyRect({ x, y, w, h, u: U_BOARD, pad, style: perKey ? "uni" : "solid", fill: o.look.color ?? OFF, cls })
+        keyRect({ x, y, w, h, u: U_BOARD, pad, style: tint ? "uni" : "solid", fill: o.look.color ?? OFF, cls })
       )
       .join("");
     // 逐键板:灯点在 QMK 登记的真实位置(0-224 × 0-64 → 板面)
@@ -133,20 +103,24 @@ function boardSvg(o: UniversalViewOpts, cls: string, selected?: Set<number>): st
       : "";
     return svgWrap(ext.maxX * U_BOARD + pad * 2, maxY * U_BOARD + pad * 2, keys + dots + profileDots(o, cls, pad, selected));
   }
-  // 标定板:配列由标定者确认 → 实心绘制,无占位水印
+  // 标定板:配列由标定者确认 → 实心绘制,无占位水印;模板可带键帽标注
   if (o.profileKeys) {
     const tpl = o.profileKeys;
     const ext = keysExtent(tpl);
     const h = (Math.max(ext.maxY, ledMaxY(o)) + 0.55) * U_BOARD + pad * 2; // 余量容纳 LED 标注
-    const w = ext.maxX * U_BOARD + pad * 2;
-    const keys = tpl.map(([x, y, kw]) => keyRect({ x, y, w: kw, u: U_BOARD, pad, style: "solid" })).join("");
+    const w = Math.max(ext.maxX, ledMaxX(o)) * U_BOARD + pad * 2;
+    const keys = tpl
+      .map(([x, y, kw, label]) =>
+        keyRect({ x, y, w: kw, u: U_BOARD, pad, style: o.tintKeys ? "uni" : "solid", fill: o.look.color ?? OFF, cls, label })
+      )
+      .join("");
     return svgWrap(w, h, keys + profileDots(o, cls, pad, selected));
   }
   // 配列未知:键数反推的幽灵模板 + 占位水印
   const tpl = o.ghostKeys ?? GHOST_DEFAULT;
   const ext = keysExtent(tpl);
   const h = Math.max(ext.maxY, ledMaxY(o)) * U_BOARD + pad * 2;
-  const w = ext.maxX * U_BOARD + pad * 2;
+  const w = Math.max(ext.maxX, ledMaxX(o)) * U_BOARD + pad * 2;
   const ghost = tpl.map(([x, y, kw]) => keyRect({ x, y, w: kw, u: U_BOARD, pad, style: "ghost" })).join("");
   const mark = `<text x="${w / 2}" y="${h / 2 + 12}" text-anchor="middle" style="font-size:40px;fill:#ffffff12">?</text>`;
   return svgWrap(w, h, ghost + profileDots(o, cls, pad, selected) + mark);
@@ -157,18 +131,19 @@ function stripSvg(o: UniversalViewOpts, cls: string, selected?: Set<number>): st
   const n = o.stripCount;
   const sp = 26, pad = 14, h = 42, m = 5;
   const w = n * sp + pad * 2;
-  const dots = Array.from({ length: n }, (_, i) =>
-    ledDot({
+  const dots = Array.from({ length: n }, (_, i) => {
+    const color = o.frame ? (o.frame.leds[i] ?? OFF) : (o.look.color ?? OFF);
+    return ledDot({
       cx: pad + i * sp + sp / 2,
       cy: h / 2,
-      color: o.look.color ?? OFF,
-      cls,
-      glow: !!o.look.color,
+      color,
+      cls: o.frame ? frameCls(o.frame, i) : cls,
+      glow: color !== OFF,
       idx: i,
       selected: selected?.has(i),
       accent: o.accent,
-    })
-  ).join("");
+    });
+  }).join("");
   const body =
     cornerBrackets(m + 4, m + 3, w - 2 * m - 8, h - 2 * m - 6, o.accent, 4, 9) +
     `<rect x="${m + 4}" y="${m + 3}" width="${w - 2 * m - 8}" height="${h - 2 * m - 6}" rx="8" fill="#14161a" stroke="#ffffff22"/>` +
@@ -179,9 +154,10 @@ function stripSvg(o: UniversalViewOpts, cls: string, selected?: Set<number>): st
 export function renderUniversalView(el: HTMLElement, o: UniversalViewOpts, selected?: Set<number>) {
   const cls = animCls({ breathing: o.look.breathing, blink: o.look.blinkWarn, passthrough: o.look.color === null });
   const tag = o.tag ? `<span class="pv-tag pv-tag-${o.tag.kind}">${o.tag.text}</span>` : "";
+  const info = o.info ? `<button class="pv-info" type="button" aria-label="info">i</button>` : "";
   const strip = o.stripCount > 0 ? `<div class="pv-leds">${stripSvg(o, cls, selected)}<span class="pv-leds-label">${o.stripLabel}</span></div>` : "";
   el.innerHTML =
-    `<div class="pv-title"><span class="pv-name">${o.title}${tag}</span><span class="pv-sub">${o.sub}</span></div>` +
+    `<div class="pv-title"><span class="pv-name">${o.title}${tag}${info}</span><span class="pv-sub">${o.sub}</span></div>` +
     `<div class="pv-board">${boardSvg(o, cls, selected)}</div>` +
     strip;
 }
