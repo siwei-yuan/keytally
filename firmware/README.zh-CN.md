@@ -44,7 +44,8 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt qmk
 红绿互换(实机确认),我们的 `config.h` 撤销该定义回到 GRB 默认;2023 版 fork
 早于 `RGBLIGHT_LED_COUNT`/`rgb_t` 改名,`usage_lights_config.h` 带了兼容 shim。
 「还原原厂」刷回官方 v1.2 发布固件
-([percent-skog-reboot Releases](https://github.com/scottywei/percent-skog-reboot/releases))。
+([percent-skog-reboot Releases](https://github.com/scottywei/percent-skog-reboot/releases))——
+app 会先征求确认,一次性下载并做 sha256 校验后才落盘使用。
 
 依赖(一次性):
 

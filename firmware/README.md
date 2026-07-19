@@ -58,7 +58,8 @@ GRB LEDs (confirmed on hardware), so our `config.h` restores the GRB default; an
 the 2023-era fork predates the `RGBLIGHT_LED_COUNT`/`rgb_t` renames, so
 `usage_lights_config.h` carries tiny compat shims. "Restore stock" flashes the
 official v1.2 release hex from
-[percent-skog-reboot Releases](https://github.com/scottywei/percent-skog-reboot/releases).
+[percent-skog-reboot Releases](https://github.com/scottywei/percent-skog-reboot/releases) —
+the app asks for confirmation, downloads it once, and sha256-verifies it before writing anything.
 
 ## Lighting scheme (6 LEDs, default roles)
 

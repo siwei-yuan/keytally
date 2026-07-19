@@ -174,6 +174,29 @@ pub fn dfu_backup(dest: &PathBuf) -> Result<(), String> {
     }
 }
 
+/// 可在线获取的官方原厂固件(app 内确认后一键下载的还原目标)
+pub struct StockDownload {
+    pub url: &'static str,
+    pub file_name: &'static str,
+    pub sha256: &'static str,
+    pub size_kb: u32,
+    pub source: &'static str,
+}
+
+pub fn stock_download(vid: u16, pid: u16) -> Option<StockDownload> {
+    match (vid, pid) {
+        // Percent Skog Reboot:厂商公开的官方 v1.2 固件(ANSI 6.25u)
+        (0x8101, 0x5352) => Some(StockDownload {
+            url: "https://github.com/scottywei/percent-skog-reboot/releases/download/v1.2/bioi_skog_reboot_ansi_625u_via.hex",
+            file_name: "bioi_skog_reboot_ansi_625u_via.hex",
+            sha256: "62b8e4d2ba518b16ffa8bfa0b7686b3fc32acca6f5891b9909b507cf54b111f0",
+            size_kb: 106,
+            source: "scottywei/percent-skog-reboot Releases v1.2",
+        }),
+        _ => None,
+    }
+}
+
 pub fn stock_backup_path(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("stock-firmware.bin")
 }

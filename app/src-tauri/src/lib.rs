@@ -5,6 +5,7 @@ use collector::types::{Config as CollectorConfig, Snapshot};
 use collector::{activity, claude_quota, packet, snapshot};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::io::Read;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -417,6 +418,73 @@ fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resu
     Ok(())
 }
 
+#[derive(Serialize)]
+struct StockDlInfo {
+    file_name: String,
+    size_kb: u32,
+    source: String,
+}
+
+#[derive(Serialize)]
+struct StockStatus {
+    /// 还原目标是否已就位(芯片存档 / 官方固件 / 平替固件任一)
+    present: bool,
+    /// 未就位但有官方下载源时的说明(供 UI 征求用户确认)
+    downloadable: Option<StockDlInfo>,
+}
+
+#[tauri::command]
+fn stock_status(app: tauri::State<Arc<App>>) -> StockStatus {
+    let (vid, pid) = {
+        let sh = app.shared.lock().unwrap();
+        (sh.kb.vid, sh.kb.pid)
+    };
+    let dir = app.config_path.parent().unwrap_or(std::path::Path::new("."));
+    let present = flash::restore_target(dir, vid, pid).is_some();
+    let downloadable = if present {
+        None
+    } else {
+        flash::stock_download(vid, pid).map(|d| StockDlInfo {
+            file_name: d.file_name.into(),
+            size_kb: d.size_kb,
+            source: d.source.into(),
+        })
+    };
+    StockStatus { present, downloadable }
+}
+
+/// 用户在 UI 里确认后调用:下载官方原厂固件,sha256 校验后落盘到 <config>/stock/
+#[tauri::command]
+fn fetch_stock_firmware(app: tauri::State<Arc<App>>) -> Result<(), String> {
+    use sha2::Digest;
+    let (vid, pid) = {
+        let sh = app.shared.lock().unwrap();
+        (sh.kb.vid, sh.kb.pid)
+    };
+    let dl = flash::stock_download(vid, pid).ok_or("该键盘没有已知的官方固件下载源")?;
+    let resp = ureq::get(dl.url)
+        .timeout(Duration::from_secs(30))
+        .call()
+        .map_err(|e| format!("下载失败:{e}"))?;
+    let mut bytes = Vec::with_capacity(dl.size_kb as usize * 1024);
+    resp.into_reader()
+        .take(4 * 1024 * 1024)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("下载失败:{e}"))?;
+    let hash: String = sha2::Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
+    if hash != dl.sha256 {
+        return Err(format!("校验失败:sha256 不匹配(得到 {hash});已放弃写盘"));
+    }
+    let dir = app
+        .config_path
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("stock");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    std::fs::write(dir.join(dl.file_name), &bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[tauri::command]
 fn set_kb_state(app: tauri::State<Arc<App>>, mode: Option<u8>, source: Option<u8>) {
     {
@@ -656,7 +724,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config, backup_keymap, upgrade_to_pro, restore_stock, set_led_roles, probe_key_count])
+        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config, backup_keymap, upgrade_to_pro, restore_stock, set_led_roles, probe_key_count, stock_status, fetch_stock_firmware])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

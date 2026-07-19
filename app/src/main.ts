@@ -513,7 +513,39 @@ window.addEventListener("DOMContentLoaded", async () => {
 
   // Tauri WebView 不支持原生 confirm(),用按钮二次确认
   let upgradeArmed: number | null = null;
+  let restoreArmed: number | null = null;
   $("#restore-stock").addEventListener("click", async () => {
+    const btn = $<HTMLButtonElement>("#restore-stock");
+    // 还原固件未就位但有官方下载源:先征求确认,下载校验后再继续
+    type StockStatus = { present: boolean; downloadable: { file_name: string; size_kb: number; source: string } | null };
+    const status = await invoke<StockStatus>("stock_status").catch(() => null);
+    if (status && !status.present && status.downloadable) {
+      const d = status.downloadable;
+      if (restoreArmed === null) {
+        btn.classList.add("armed");
+        $("#pro-progress").textContent = t(
+          `还原固件未就位。再点一次,确认从官方源下载:${d.source} 的 ${d.file_name}(约 ${d.size_kb}KB,sha256 校验)`,
+          `Restore firmware not present. Click again to download it from the official source: ${d.file_name} from ${d.source} (~${d.size_kb}KB, sha256-verified)`
+        );
+        restoreArmed = window.setTimeout(() => {
+          restoreArmed = null;
+          btn.classList.remove("armed");
+          $("#pro-progress").textContent = "";
+        }, 8000);
+        return;
+      }
+      clearTimeout(restoreArmed);
+      restoreArmed = null;
+      btn.classList.remove("armed");
+      $("#pro-progress").textContent = t("正在下载官方固件…", "Downloading the official firmware…");
+      try {
+        await invoke("fetch_stock_firmware");
+        $("#pro-progress").textContent = t("✅ 已下载并通过校验,开始还原…", "✅ Downloaded and verified — restoring…");
+      } catch (e) {
+        $("#pro-progress").textContent = `❌ ${e}`;
+        return;
+      }
+    }
     try {
       await invoke("restore_stock");
     } catch (e) {
