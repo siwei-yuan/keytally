@@ -296,6 +296,9 @@ fn enter_bootloader_with_fallback(app: &Arc<App>, emit: &dyn Fn(&str), vid: u16,
 fn restore_stock(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Result<(), String> {
     let (vid, pid) = {
         let sh = app.shared.lock().unwrap();
+        if !sh.kb.connected {
+            return Err("键盘未连接".into());
+        }
         (sh.kb.vid, sh.kb.pid)
     };
     let (job, kind) = flash::restore_target(
@@ -435,10 +438,14 @@ struct StockStatus {
 
 #[tauri::command]
 fn stock_status(app: tauri::State<Arc<App>>) -> StockStatus {
-    let (vid, pid) = {
+    let (vid, pid, connected) = {
         let sh = app.shared.lock().unwrap();
-        (sh.kb.vid, sh.kb.pid)
+        (sh.kb.vid, sh.kb.pid, sh.kb.connected)
     };
+    // 断线后 vid/pid 残留上一块板的值:未连接时不报告任何可下载项
+    if !connected {
+        return StockStatus { present: false, downloadable: None };
+    }
     let dir = app.config_path.parent().unwrap_or(std::path::Path::new("."));
     let present = flash::restore_target(dir, vid, pid).is_some();
     let downloadable = if present {
@@ -459,8 +466,12 @@ fn fetch_stock_firmware(app: tauri::State<Arc<App>>) -> Result<(), String> {
     use sha2::Digest;
     let (vid, pid) = {
         let sh = app.shared.lock().unwrap();
+        if !sh.kb.connected {
+            return Err("键盘未连接".into());
+        }
         (sh.kb.vid, sh.kb.pid)
     };
+    // 注册表按当前连接键盘的 vid:pid 匹配,只有登记过官方固件源的板子才会发起下载
     let dl = flash::stock_download(vid, pid).ok_or("该键盘没有已知的官方固件下载源")?;
     let resp = ureq::get(dl.url)
         .timeout(Duration::from_secs(30))
