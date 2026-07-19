@@ -20,6 +20,8 @@ pub struct ViaLook {
     pub blink_warn: bool,  // 1Hz 红色告警闪烁
     pub breathing: bool,   // 2.2s 呼吸
     pub passthrough: bool, // 不接管,显示用户自己的灯效
+    /// 修正 GRB 字节序接反的固件:发送前做 R/G 互换(色相绕 60° 反射)
+    pub swap_rg: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -38,6 +40,8 @@ pub enum Cmd {
     RestoreKeymap((Vec<u8>, Vec<u8>), std::sync::mpsc::Sender<Result<(), String>>),
     /// Pro 0xC3+0xC4:下发灯位角色表与进度条样式(仅 Pro 后端)
     SetLedRoles(Vec<u8>, u8),
+    /// 读取实体键数:layer0 非零键码计数(矩阵空洞为 0)
+    ProbeKeyCount(std::sync::mpsc::Sender<Result<u16, String>>),
     /// VIA 0x05:改单个键(临时注入 QK_BOOT 用,刷机后 Restore 会还原)
     SetKeycode { layer: u8, row: u8, col: u8, kc: u16, reply: std::sync::mpsc::Sender<Result<(), String>> },
     /// VIA 0x0B:跳进 bootloader(DFU),设备会立即断开
@@ -119,8 +123,8 @@ fn via_restore_keymap(dev: &hidapi::HidDevice, data: &[u8]) -> Result<(), String
 pub enum Event {
     Connected { name: Option<String>, backend: &'static str, lighting: &'static str, vid: u16, pid: u16 },
     Disconnected,
-    /// Pro 固件状态回报 (mode, source)
-    State(u8, u8),
+    /// Pro 固件状态回报 (mode, source, led_count[0=未知,旧固件])
+    State(u8, u8, u8),
 }
 
 #[derive(Clone, Copy)]
@@ -364,6 +368,29 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                         }
                     }
                 }
+                Cmd::ProbeKeyCount(reply) => {
+                    let r = match &conn {
+                        Some((dev, _)) => {
+                            let layers = handled(xfer(dev, &[0x11], 1))
+                                .map(|b| b[1] as usize)
+                                .filter(|&l| l > 0 && l <= 16)
+                                .unwrap_or(4);
+                            // 键位表越界读返回 0x00(QMK dynamic_keymap 行为),读 2KB 覆盖所有矩阵
+                            via_chunked_read(dev, 0x12, 2048).map(|data| {
+                                let last_nz = data.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+                                let unit = 2 * layers;
+                                let total = last_nz.div_ceil(unit) * unit;
+                                let cells = total / (2 * layers);
+                                data[..(cells * 2).min(data.len())]
+                                    .chunks(2)
+                                    .filter(|c| c[0] != 0 || c.get(1).copied().unwrap_or(0) != 0)
+                                    .count() as u16
+                            })
+                        }
+                        None => Err("keyboard not connected".into()),
+                    };
+                    let _ = reply.send(r);
+                }
                 Cmd::SetKeycode { layer, row, col, kc, reply } => {
                     let r = match &conn {
                         Some((dev, _)) => {
@@ -416,6 +443,10 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                     h = 0;
                     s = 255;
                 }
+                if look.swap_rg {
+                    // R/G 互换等价于色相绕 60°(QMK 色环 85/2 处)反射:h' = 85 - h
+                    h = 85u8.wrapping_sub(h);
+                }
                 let hsv = (h, s, v.min(255) as u8);
                 if !taken_over || last_applied != Some(hsv) {
                     via_apply(dev, be, hsv.0, hsv.1, hsv.2);
@@ -432,7 +463,7 @@ fn run(rx: Receiver<Cmd>, on_event: impl Fn(Event)) {
                 let timeout = if matches!(be, Backend::Via { .. }) { 100 } else { 200 };
                 match dev.read_timeout(&mut buf, timeout) {
                     Ok(n) if n > 0 && buf[0] == CMD_STATE && matches!(be, Backend::Pro) => {
-                        on_event(Event::State(buf[1], buf[2]));
+                        on_event(Event::State(buf[1], buf[2], buf[4]));
                     }
                     Ok(_) => {}
                     Err(_) => drop_dev = true,

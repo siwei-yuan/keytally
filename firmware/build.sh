@@ -30,3 +30,18 @@ else
     qmk compile -kb "$KB" -km "$KM"
     qmk compile -kb "$KB" -km via_plain
 fi
+
+# ---- Percent Skog Reboot(AVR,BLE 双模,只能在 scottywei fork 树里编译)----
+# fork: github.com/scottywei/qmk_firmware @ update-and-add-bioi-keyboards
+QMK_BIOI="${QMK_BIOI:-$HOME/qmk_firmware-bioi}"
+if [ -d "$QMK_BIOI" ]; then
+    export PATH="/opt/homebrew/opt/avr-gcc@8/bin:$PATH"
+    SKOG_KM_DIR="$QMK_BIOI/keyboards/bioi/skog_reboot/keymaps/$KM"
+    mkdir -p "$SKOG_KM_DIR"
+    cp "$REPO"/firmware/skog_reboot/* "$SKOG_KM_DIR/"
+    cp "$REPO"/firmware/common/usage_lights.{c,h} "$SKOG_KM_DIR/"
+    # rev_a = at90usb646 / rev_b = at90usb1286(刷机时由 dfu-programmer 探测芯片选用)
+    make -C "$QMK_BIOI" "bioi/skog_reboot/rev_a:$KM" "bioi/skog_reboot/rev_b:$KM"
+else
+    echo "跳过 Skog Reboot:未找到 $QMK_BIOI(git clone -b update-and-add-bioi-keyboards https://github.com/scottywei/qmk_firmware \"\$HOME/qmk_firmware-bioi\")"
+fi

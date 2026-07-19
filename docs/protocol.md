@@ -66,6 +66,7 @@ Sent on keyboard-side key switches and in response to `0xC1`/`0xC2`:
 | 1    | current mode (0/1/2) |
 | 2    | current source (0/1) |
 | 3    | firmware protocol version = `1` |
+| 4    | LED count (`RGBLIGHT_LED_COUNT` compile-time constant; 0 = unknown/older firmware) |
 
 ## 0xC2 — query state (app → keyboard)
 

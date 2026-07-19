@@ -52,6 +52,7 @@ static void ul_send_state_report(void) {
     buf[1]          = ul_state.mode;
     buf[2]          = ul_state.source;
     buf[3]          = UL_PROTOCOL_VERSION;
+    buf[4]          = RGBLIGHT_LED_COUNT; // 灯数(编译常量,协议 v1 的空余字节)
     raw_hid_send(buf, sizeof(buf));
 }
 

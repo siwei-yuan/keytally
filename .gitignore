@@ -3,3 +3,8 @@ dist/
 target/
 .DS_Store
 *.log
+
+# 宣传物料与视频制作工具链(只留本地,不进仓库)
+videos/
+.agents/
+skills-lock.json

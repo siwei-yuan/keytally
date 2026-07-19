@@ -19,6 +19,8 @@ pub struct AppConfig {
     pub led_roles: std::collections::HashMap<String, Vec<u8>>,
     /// 进度条样式:0=数量 1=颜色
     pub bar_style: u8,
+    /// vid:pid → 红绿互换(修正 GRB 字节序接反的灯带固件,如 BIOI)
+    pub swap_rg: std::collections::HashMap<String, bool>,
     /// 周限额告警阈值(%)
     pub warn_threshold: u8,
     /// 额度模式指标:0=5h 优先,1=周优先,2=两者取大
@@ -38,6 +40,7 @@ impl Default for AppConfig {
             codex_color: "#10A37F".into(),
             led_roles: Default::default(),
             bar_style: 0,
+            swap_rg: Default::default(),
         }
     }
 }
@@ -54,6 +57,8 @@ pub struct KbState {
     pub lighting: Option<String>,
     pub vid: u16,
     pub pid: u16,
+    /// Pro 固件回报的灯数(0 = 未知/非 Pro)
+    pub led_count: u8,
 }
 
 /// "#RRGGBB" → QMK (hue, sat),解析失败用 Claude 默认色
@@ -75,6 +80,16 @@ fn hex_to_hs(hex: &str) -> (u8, u8) {
 
 /// 与 app 预览、Pro 固件一致的映射:模式+数据源 → 整板颜色
 fn compute_via_look(snap: &Snapshot, kb: &KbState, cfg: &AppConfig) -> hid::ViaLook {
+    let swap = *cfg
+        .swap_rg
+        .get(&format!("{:04x}:{:04x}", kb.vid, kb.pid))
+        .unwrap_or(&false);
+    let mut look = compute_via_look_inner(snap, kb, cfg);
+    look.swap_rg = swap;
+    look
+}
+
+fn compute_via_look_inner(snap: &Snapshot, kb: &KbState, cfg: &AppConfig) -> hid::ViaLook {
     let (u, budget) = if kb.source == 0 {
         (&snap.claude, cfg.claude_daily_budget)
     } else {
@@ -227,6 +242,13 @@ fn write_backup(app: &App, keymap: &[u8], macros: &[u8]) -> Result<PathBuf, Stri
 }
 
 #[tauri::command]
+fn probe_key_count(app: tauri::State<Arc<App>>) -> Result<u16, String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.hid_tx.send(hid::Cmd::ProbeKeyCount(tx)).map_err(|e| e.to_string())?;
+    rx.recv_timeout(Duration::from_secs(15)).map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 fn backup_keymap(app: tauri::State<Arc<App>>) -> Result<String, String> {
     let (keymap, macros) = dump_keymap_blocking(&app)?;
     let path = write_backup(&app, &keymap, &macros)?;
@@ -261,7 +283,7 @@ fn restore_stock(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resul
         let sh = app.shared.lock().unwrap();
         (sh.kb.vid, sh.kb.pid)
     };
-    let (stock, kind) = flash::restore_target(
+    let (job, kind) = flash::restore_target(
         app.config_path.parent().unwrap_or(std::path::Path::new(".")),
         vid,
         pid,
@@ -281,7 +303,7 @@ fn restore_stock(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resul
             return emit(&format!("❌ {e}"));
         }
         emit("② 刷入还原固件…");
-        if let Err(e) = flash::dfu_flash(&stock) {
+        if let Err(e) = flash::flash(&job) {
             return emit(&format!("❌ {e}"));
         }
         emit("③ 等待键盘重连…");
@@ -318,7 +340,7 @@ fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resu
         }
         (sh.kb.vid, sh.kb.pid)
     };
-    let bin = flash::pro_firmware_bin(vid, pid).ok_or("该键盘暂无 Pro 固件(欢迎社区适配)")?;
+    let job = flash::pro_firmware(vid, pid).ok_or("该键盘暂无 Pro 固件(欢迎社区适配)")?;
     let app = app.inner().clone();
     std::thread::spawn(move || {
         let emit = |msg: &str| {
@@ -341,15 +363,18 @@ fn upgrade_to_pro(app: tauri::State<Arc<App>>, handle: tauri::AppHandle) -> Resu
         if let Err(e) = enter_bootloader_with_fallback(&app, &emit) {
             return fail(e);
         }
-        emit("④ 备份原厂固件…");
-        let stock = flash::stock_backup_path(app.config_path.parent().unwrap_or(std::path::Path::new(".")));
-        if !stock.exists() {
-            if let Err(e) = flash::dfu_backup(&stock) {
-                emit(&format!("④ 原厂固件读出失败({e}),继续刷入;之后可还原为开源 VIA 固件"));
+        // 芯片固件读出仅 STM32 路径支持;AVR 板(如 Skog)以官方发布固件作为还原目标
+        if matches!(job, flash::FlashJob::Stm32Bin(_)) {
+            emit("④ 备份原厂固件…");
+            let stock = flash::stock_backup_path(app.config_path.parent().unwrap_or(std::path::Path::new(".")));
+            if !stock.exists() {
+                if let Err(e) = flash::dfu_backup(&stock) {
+                    emit(&format!("④ 原厂固件读出失败({e}),继续刷入;之后可还原为开源 VIA 固件"));
+                }
             }
         }
         emit("④ 刷入 Pro 固件…(约 10 秒,勿拔线)");
-        if let Err(e) = flash::dfu_flash(&bin) {
+        if let Err(e) = flash::flash(&job) {
             return fail(e);
         }
         emit("⑤ 等待键盘重连…");
@@ -574,9 +599,12 @@ pub fn run() {
                                 sh.kb.connected = false;
                                 sh.kb.backend = None;
                             }
-                            hid::Event::State(m, s) => {
+                            hid::Event::State(m, s, n) => {
                                 sh.kb.mode = m;
                                 sh.kb.source = s;
+                                if n > 0 {
+                                    sh.kb.led_count = n;
+                                }
                             }
                         }
                     }
@@ -598,7 +626,7 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config, backup_keymap, upgrade_to_pro, restore_stock, set_led_roles])
+        .invoke_handler(tauri::generate_handler![get_state, set_kb_state, set_config, backup_keymap, upgrade_to_pro, restore_stock, set_led_roles, probe_key_count])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

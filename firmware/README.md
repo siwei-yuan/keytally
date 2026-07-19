@@ -2,14 +2,19 @@
 
 [中文版](README.zh-CN.md)
 
-Target board: **GrayStudio Think6.5 V3** (`gray_studio/think65v3`, STM32F072,
-6 WS2812 badge LEDs driven by `rgblight`, no per-key RGB).
+Reference boards (both fully wired into the app's one-click flash):
+
+| Board | MCU | Tree | LEDs | Flash tool |
+|---|---|---|---|---|
+| GrayStudio Think6.5 V3 (`gray_studio/think65v3`) | STM32F072 | mainline QMK | 6 WS2812 badge | `dfu-util` |
+| Percent Skog Reboot (`bioi/skog_reboot`) | AVR at90usb646/1286 (rev A/B) | [scottywei fork](https://github.com/scottywei/qmk_firmware/tree/update-and-add-bioi-keyboards) (BLE duo-mode) | 10 WS2812 (5 strip + 5 bottom logo) | `dfu-programmer` |
 
 ```
 common/           board-agnostic core (protocol, state machine, rgblight rendering)
-think65v3/        Pro keymap source (VIA + usage lights); build.sh copies it into qmk_firmware
-think65v3-plain/  clean VIA-only keymap (the "restore stock" fallback target)
-build.sh          build / flash script
+think65v3/        Think6.5 V3 Pro keymap (VIA + usage lights)
+think65v3-plain/  clean VIA-only keymap (the Think65 "restore stock" fallback target)
+skog_reboot/      Skog Reboot Pro keymap (VIA + usage lights + BLE kept intact)
+build.sh          build / flash script (builds every board it finds a tree for)
 ```
 
 ## Build & flash
@@ -30,6 +35,30 @@ Then:
 ./build.sh          # compile → qmk_firmware/gray_studio_think65v3_usage_lights.bin (+ via_plain)
 ./build.sh flash    # compile and flash (enter DFU first: the app does this for you)
 ```
+
+### Skog Reboot extras
+
+The Skog Reboot only builds inside scottywei's QMK fork (its BLE duo-mode needs
+custom `main.c`/`ble.c`/`usart.c`), so `build.sh` looks for the fork at
+`~/qmk_firmware-bioi` and skips the board if absent:
+
+```sh
+brew install osx-cross/avr/avr-gcc@8 avr-binutils dfu-programmer
+git clone --depth 1 -b update-and-add-bioi-keyboards \
+    https://github.com/scottywei/qmk_firmware ~/qmk_firmware-bioi
+cd ~/qmk_firmware-bioi && git submodule update --init --depth 1 lib/lufa lib/printf
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt qmk
+```
+
+`build.sh` produces `bioi_skog_reboot_rev_{a,b}_usage_lights.hex` for both hardware
+revisions; at flash time the app probes the chip in DFU (`dfu-programmer <mcu> get`)
+and picks the right one. Two Skog-specific fixes live in the keymap:
+the vendor tree sets `WS2812_BYTE_ORDER_RGB`, which swaps red/green on the actual
+GRB LEDs (confirmed on hardware), so our `config.h` restores the GRB default; and
+the 2023-era fork predates the `RGBLIGHT_LED_COUNT`/`rgb_t` renames, so
+`usage_lights_config.h` carries tiny compat shims. "Restore stock" flashes the
+official v1.2 release hex from
+[percent-skog-reboot Releases](https://github.com/scottywei/percent-skog-reboot/releases).
 
 ## Lighting scheme (6 LEDs, default roles)
 
@@ -63,16 +92,45 @@ The Fn layer binds `Fn+,` = cycle mode and `Fn+.` = toggle source
 
 ## Adapting a new board (community)
 
-1. Copy `think65v3/` to a directory for your board; adjust
-   `usage_lights_config.h` (LED index table) and the keymap; build with `./build.sh`
-   (add your board to the script).
-2. On the app side, register your VID/PID → firmware path in
-   `app/src-tauri/src/flash.rs` and add the same VID/PID to `PRO_BOARDS`
-   in `app/src/main.ts`.
+Two tiers — pick how deep you want to go:
+
+### Tier 1 — calibration only, no flashing (~2 min)
+
+Teach the app where your board's LEDs physically sit. Add an entry to
+`app/src/profiles.json` keyed by `vid:pid`:
+
+```jsonc
+"8101:5352": {
+  "name": "Percent Skog Reboot",
+  "layout": "tkl87",                    // 60 | 65 | tkl87 | 96 | 104
+  "leds": [
+    { "x": 15.4, "y": 4.0 },            // key-unit coords, face defaults to "top"
+    { "x": 8.0, "y": 6.2, "face": "bottom" }  // side/bottom LEDs: counted, not drawn
+  ]
+}
+```
+
+Coordinates are in key units (1u = one key). Calibrate against the physical board —
+the UI shows a `CALIBRATED · JSON` tag so users know the provenance. List LEDs in
+**chain order with `face:"top"` first**; that keeps UI dot indices aligned with
+firmware LED indices if a Pro port follows later. PR just this file.
+
+### Tier 2 — Pro firmware (per-LED control, keyboard-side switching)
+
+1. Copy `think65v3/` (mainline boards) or `skog_reboot/` (vendor-fork boards) as a
+   template; adjust `usage_lights_config.h` (default LED roles) and the keymap;
+   add your board to `build.sh`.
+2. App side: register VID/PID → `FlashJob` in `app/src-tauri/src/flash.rs`
+   (`Stm32Bin` for dfu-util targets, `AvrHex` with chip candidates for
+   dfu-programmer targets, one per hardware rev), and add the VID/PID to
+   `PRO_BOARDS` in `app/src/main.ts`.
 3. Plug in → Settings → "Flash Pro firmware". Keymap/macros are backed up and
    restored automatically; the bootloader is entered via VIA `0x0B` (software,
    no case opening) with a temporary `Fn+Esc` fallback if the vendor firmware
    blocks the jump.
+
+If your board already has a Tier 1 profile, the Pro UI reuses it: per-LED
+click/drag role editing happens right on the calibrated layout.
 
 Boards with per-key RGB (`rgb_matrix`): the core module currently implements the
 `rgblight` backend; an `rgb_matrix` variant existed pre-role-table (see git history)

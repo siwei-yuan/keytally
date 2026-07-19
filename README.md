@@ -44,7 +44,7 @@ Two tiers, auto-detected on plug-in:
 
 | | 🌍 Universal mode | 🚀 Pro mode |
 |---|---|---|
-| Works on | **any VIA keyboard with lights** (VIA protocol v2/v3, rgblight or rgb_matrix) | boards with a community firmware build ([adapt yours in ~5 min](firmware/README.md)) |
+| Works on | any VIA keyboard with lights (VIA protocol v2/v3, rgblight or rgb_matrix) — **extensively tested only on the [two supported boards](#supported-keyboards)** | boards with a community firmware build ([adapt yours](#add-your-keyboard-community)) |
 | Flashing required | **none** — plug and play | one click in the app (auto keymap/macro backup & restore) |
 | Light rendering | whole-board color = usage | per-LED: progress bar + source indicator |
 | Switch mode/source from keyboard | — | ✅ two bindable keycodes, syncs back to the app |
@@ -106,13 +106,49 @@ Roles persist per keyboard and re-apply on every connect.
 
 ## Supported keyboards
 
-- **Universal mode**: any VIA-enabled QMK keyboard with lights. LED-zone previews are generated from the QMK database (2,677 boards, by USB VID/PID).
-- **Pro mode**:
+**Natively supported** — calibrated layout + LED positions, Pro firmware, verified on real hardware:
 
-| Board | Status |
-|---|---|
-| GrayStudio Think6.5 V3 | ✅ reference implementation |
-| *your board here* | [3-step adaptation guide](firmware/README.md) — a LED config header + one compile |
+| Board | Universal mode | Pro firmware |
+|---|---|---|
+| GrayStudio Think6.5 V3 | ✅ | ✅ STM32, mainline QMK |
+| Percent Skog Reboot | ✅ | ✅ AVR rev A/B, BLE duo-mode kept, R/G byte-order fixed |
+
+**Everything else**: universal mode is designed to work on any VIA-enabled keyboard with lights, and the preview falls back to the QMK database (2,677 boards by VID/PID) or a key-count probe — but boards beyond the two above **have not been extensively tested; exact behavior is unknown** until someone calibrates and verifies them. The UI never bluffs about this: every preview carries a provenance tag — `CALIBRATED · JSON` (orange), `QMK DATABASE` (green), or `PROBED · SKETCH` (gray).
+
+## Add your keyboard (community)
+
+Two tiers. Both start with your board's USB IDs: macOS System Information → USB → your keyboard → *Vendor ID / Product ID* (4-digit lowercase hex, e.g. `8101:5352`).
+
+### Tier 1 — calibrate the layout & LEDs (a JSON entry, no flashing)
+
+Add one entry to [`app/src/profiles.json`](app/src/profiles.json):
+
+```jsonc
+"8101:5352": {                          // "vid:pid", lowercase hex, zero-padded
+  "name": "Percent Skog Reboot",        // display name
+  "layout": "tkl87",                    // layout template: 60 | 65 | tkl87 | 96 | 104
+  "note": "optional free-form provenance notes",
+  "leds": [
+    { "x": 15.4, "y": 4.0 },            // LED #0 — key-unit coords, face defaults to "top"
+    { "x": 15.75, "y": 4.0 },           // LED #1 … one object per LED, in chain order
+    { "x": 8.0, "y": 6.2, "face": "bottom" }  // side/bottom LEDs: counted, not drawn
+  ]
+}
+```
+
+Rules:
+
+- **Coordinates are key units** (1u = one keycap). Origin is the layout's top-left key; `x` grows rightward, `y` downward; fractions are fine. Calibrate against the *physical* board, not vendor marketing pages.
+- **`face`**: `"top"` (default, drawn on the layout) / `"side"` / `"bottom"` (counted honestly in the caption, not drawn — on-layout rendering only makes sense for face-up LEDs).
+- **Order = WS2812 chain order, `face:"top"` entries first.** This keeps UI dot indices aligned with firmware LED indices if a Pro port is added later.
+
+**Effect once merged**: everyone who plugs in that board sees its real layout with LED dots at the physical positions, tagged `CALIBRATED · JSON` — instead of a gray probed sketch. If the board later gets Pro firmware, the per-LED role editor reuses these same positions.
+
+### Tier 2 — Pro firmware (per-LED control)
+
+Port the `firmware/common/` module to your board (copy `firmware/think65v3/` for mainline-QMK boards or `firmware/skog_reboot/` for vendor-fork boards as a template), register the VID/PID → firmware in `app/src-tauri/src/flash.rs` + `PRO_BOARDS` in `app/src/main.ts`, and PR it. Full walkthrough: [firmware/README.md](firmware/README.md).
+
+**Effect once merged**: the app's *Flash Pro firmware* button lights up for that board — one click backs up the user's VIA keymap/macros, flashes, and restores them. Users get per-LED progress bar + indicator, two bindable keycodes to switch mode/source from the keyboard, and 60-second offline self-healing (your own lighting returns if the app dies).
 
 ## FAQ
 

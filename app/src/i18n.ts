@@ -32,6 +32,7 @@ export function applyStaticEn() {
     "Quota mode metric",
     "Claude activity color",
     "Codex activity color",
+    "Swap red/green on this keyboard (GRB strip fix)",
   ];
   labels.forEach((l, i) => {
     if (lt[i]) l.childNodes[0]!.textContent = lt[i] + " ";

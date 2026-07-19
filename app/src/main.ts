@@ -1,70 +1,61 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import LED_DB_JSON from "./led-db.json";
-import type { BoardData } from "./keyboard";
-const LED_DB = LED_DB_JSON as unknown as Record<string, BoardData>;
+import PROFILES_JSON from "./profiles.json";
 import { applyStaticEn, t, trProgress } from "./i18n";
-import {
-  ACCENTS,
-  applyCustom,
-  computeLeds,
-  DEFAULT_ROLES,
-  computeViaLook,
-  renderBoardData,
-  renderKeyboard,
-  renderUniversal,
-  viaLookToFrame,
-  type Snapshot,
-  type SourceUsage,
-  renderStrip,
-} from "./keyboard";
+import { ACCENTS, applyCustom, computeLeds, computeViaLook, DEFAULT_ROLES, viaLookToFrame } from "./compute";
+import { ghostByKeyCount, layoutByName } from "./layouts";
+import { renderKeyboard, renderUniversalView } from "./views";
+import { initLedSelection } from "./select";
+import type { BoardData, BoardProfile, FullState, GhostKey, KbState, SourceUsage } from "./types";
 
-interface KbState {
-  mode: number;
-  source: number;
-  connected: boolean;
-  device_name: string | null;
-  backend: string | null;
-  lighting: string | null;
-  vid: number;
-  pid: number;
-}
+const LED_DB = LED_DB_JSON as unknown as Record<string, BoardData>;
+const PROFILES = PROFILES_JSON as unknown as Record<string, BoardProfile>;
 
-interface AppConfig {
-  claude_daily_budget: number;
-  codex_daily_budget: number;
-  warn_threshold: number;
-  quota_metric: number;
-  claude_color: string;
-  codex_color: string;
-}
 
-interface FullState {
-  snapshot: Snapshot;
-  kb: KbState;
-  config: AppConfig;
-}
+
+
+
+
 
 let state: FullState | null = null;
 const ledSel = new Set<number>();
+// 库外板:读到的实体键数缓存(-1 = 探测失败)
+const keyCountCache = new Map<string, number | "pending">();
 
 function boardKey(kb: KbState): string {
   return `${kb.vid.toString(16).padStart(4, "0")}:${kb.pid.toString(16).padStart(4, "0")}`;
 }
 
 function barStyle(): number {
-  return (state?.config as unknown as { bar_style?: number })?.bar_style ?? 0;
+  return state?.config.bar_style ?? 0;
 }
 
 function currentRoles(): number[] {
   if (!state) return [...DEFAULT_ROLES];
-  const saved = (state.config as unknown as { led_roles?: Record<string, number[]> }).led_roles?.[boardKey(state.kb)];
-  return saved && saved.length ? [...saved] : [...DEFAULT_ROLES];
+  const saved = state.config.led_roles?.[boardKey(state.kb)];
+  if (saved && saved.length) return [...saved];
+  // Pro 固件回报了灯数 → 默认布局按实际灯数生成:第 1 颗指示,其余进度条
+  const n = state.kb.led_count;
+  if (n > 0) {
+    const roles = [2, ...Array(Math.max(n - 1, 0)).fill(1)];
+    // 标定 profile 标注的侧/底灯默认不参与显示
+    const prof = PROFILES[boardKey(state.kb)];
+    if (prof && prof.leds.length === n) {
+      prof.leds.forEach((L, i) => {
+        if (L.face && L.face !== "top") roles[i] = 0;
+      });
+    }
+    return roles;
+  }
+  return [...DEFAULT_ROLES];
 }
 
 function renderLedPanel() {
   const panel = $("#led-panel");
+  // 逐灯职责编辑是 Pro 固件能力;通用模式不提供选灯交互
   if (!state || state.kb.backend !== "pro" || ledSel.size === 0) {
+    ledSel.clear();
     panel.hidden = true;
     return;
   }
@@ -147,7 +138,7 @@ function render() {
         : t("VIA 通用·灯带同色", "Universal VIA · light strip");
   $("#conn-text").textContent = kb.connected
     ? t(`已连接:${kb.device_name ?? "QMK 键盘"}(${backendLabel})`, `Connected: ${kb.device_name ?? "QMK keyboard"} (${backendLabel})`)
-    : t("未连接键盘(预览仍实时)", "No keyboard connected (preview stays live)");
+    : t("未连接键盘", "No keyboard connected");
 
   for (const btn of document.querySelectorAll<HTMLButtonElement>("#source-seg button")) {
     btn.classList.toggle("active", Number(btn.dataset.source) === kb.source);
@@ -159,28 +150,116 @@ function render() {
   applyCustom(config.claude_color, config.codex_color, config.warn_threshold, config.quota_metric);
   const budget = kb.source === 0 ? config.claude_daily_budget : config.codex_daily_budget;
   const accent = ACCENTS[kb.source] ?? ACCENTS[0];
-  if (kb.backend === "pro") {
-    renderKeyboard($("#preview"), computeLeds(snapshot, kb.mode, kb.source, budget, currentRoles(), barStyle()), accent, ledSel);
-  } else if (kb.lighting === "rgb_matrix") {
-    // 逐键 RGB 键盘:整板同色
-    renderUniversal($("#preview"), computeViaLook(snapshot, kb.mode, kb.source, budget), accent);
+  $("#preview").toggleAttribute("data-offline", !kb.connected);
+  if (!kb.connected) {
+    // 未检测到键盘:无灯的标准 87 配列,整块淡化置灰(样式见 [data-offline])
+    $("#preview").removeAttribute("data-editable");
+    renderUniversalView($("#preview"), {
+      title: t("未连接键盘", "NO KEYBOARD"),
+      sub: t("插入带灯的 VIA 键盘即自动识别", "Plug in a VIA keyboard with lights to auto-detect"),
+      look: { color: null, blinkWarn: false, breathing: false },
+      accent: "#6a6d75",
+      stripCount: 0,
+      stripLabel: "",
+      profileKeys: layoutByName("tkl87"),
+      tag: { text: t("离线", "OFFLINE"), kind: "probe" },
+    });
+  } else if (kb.backend === "pro") {
+    $("#preview").setAttribute("data-editable", "");
+    const frame = computeLeds(snapshot, kb.mode, kb.source, budget, currentRoles(), barStyle());
+    const proProfile = kb.connected && boardKey(kb) !== "4753:4003" ? PROFILES[boardKey(kb)] : undefined;
+    if (proProfile) {
+      // 标定板 + Pro 固件:标定视图上逐灯渲染/点选(链序 = profile 中 face=top 灯在前)
+      const hidden = proProfile.leds.filter((L) => L.face && L.face !== "top").length;
+      renderUniversalView(
+        $("#preview"),
+        {
+          title: (kb.device_name ?? "KEYBOARD").toUpperCase(),
+          sub: hidden > 0
+            ? t(`Pro 固件 · 点选/框选灯珠指定职责(另 ${hidden} 颗侧/底灯未显示,默认不参与)`, `Pro firmware · click/drag LEDs to assign roles (+${hidden} side/bottom hidden, unassigned by default)`)
+            : t("Pro 固件 · 点选/框选灯珠指定职责", "Pro firmware · click/drag LEDs to assign roles"),
+          look: computeViaLook(snapshot, kb.mode, kb.source, budget),
+          accent,
+          stripCount: 0,
+          stripLabel: "",
+          profileLeds: proProfile.leds,
+          profileKeys: proProfile.layout ? layoutByName(proProfile.layout) : undefined,
+          frame,
+          tag: { text: t("PRO · 逐灯", "PRO · PER-LED"), kind: "profile" },
+        },
+        ledSel
+      );
+    } else {
+      renderKeyboard($("#preview"), frame, accent, ledSel);
+    }
   } else {
-    const key = `${kb.vid.toString(16).padStart(4, "0")}:${kb.pid.toString(16).padStart(4, "0")}`;
+    $("#preview").removeAttribute("data-editable");
+    const key = boardKey(kb);
     const dev = LED_DB[key];
     const look = computeViaLook(snapshot, kb.mode, kb.source, budget);
-    if (!kb.connected || key === "4753:4003") {
-      // Think6.5 V3(或未连接时的默认视图):右侧徽章 6 灯(手工特判的灯位)
+    if (key === "4753:4003") {
+      // 灯位已知(手工特判):Think 式渲染
       renderKeyboard($("#preview"), viaLookToFrame(look), look.color ?? accent);
-    } else if (dev && dev.keys.length > 0) {
-      // 在 QMK 数据库中:画真实配列;rgb_matrix 板叠真实灯点,rgblight 板画底部灯带
-      renderBoardData($("#preview"), dev, look, accent);
     } else {
-      // 不在数据库(如未上游的厂商固件):诚实显示未知
-      renderStrip(
+      // 能力分级:灯位可知(逐键 RGB,坐标来自 QMK)→ 配列上直接画灯;
+      // 不可知(灯带/库外板)→ 上层配列 + 下层 LED 区
+      const profile = PROFILES[key];
+      const inDb = !!(dev && dev.keys.length > 0);
+      const perKey = !!(dev && dev.leds.length > 0);
+      // 库外板:通过 VIA 键位表读实体键数,反推标准配列模板
+      let kcSub: string | null = null;
+      let ghostKeys: GhostKey[] | undefined;
+      if (!inDb) {
+        const kc = keyCountCache.get(key);
+        if (kc === undefined) {
+          keyCountCache.set(key, "pending");
+          invoke<number>("probe_key_count")
+            .then((n) => {
+              keyCountCache.set(key, n);
+              render();
+            })
+            .catch(() => keyCountCache.set(key, -1));
+        } else if (typeof kc === "number" && kc > 10) {
+          const g = ghostByKeyCount(kc);
+          ghostKeys = g.keys;
+          kcSub = t(`配列未知 · 读到 ${kc} 键,按 ${g.label} 示意`, `Layout unknown · ${kc} keys detected, ${g.label} fallback`);
+        }
+      }
+      renderUniversalView(
         $("#preview"),
-        viaLookToFrame(look, dev?.rl || 6),
-        look.color ?? accent,
-        `${kb.device_name ?? "RGB"} · ${t("配列未知(不在 QMK 数据库)", "layout unknown (not in QMK database)")}`
+        {
+          title: (kb.device_name ?? dev?.n ?? "KEYBOARD").toUpperCase(),
+          sub: profile
+            ? (() => {
+                const front = profile.leds.filter((L) => !L.face || L.face === "top").length;
+                const hidden = profile.leds.length - front;
+                return hidden > 0
+                  ? t(`配列与灯位由社区标定 · 正面 ${front} 颗(另 ${hidden} 颗侧/底灯未显示)`, `Community-calibrated · ${front} front LEDs (+${hidden} side/bottom not shown)`)
+                  : t(`配列与灯位由社区标定 · ${front} 颗灯`, `Layout & LEDs community-calibrated · ${front} LEDs`);
+              })()
+            : inDb
+              ? perKey
+                ? t("逐键 RGB · 灯位来自 QMK 数据库", "Per-key RGB · LED positions from QMK database")
+                : t("配列来自 QMK 数据库 · 灯带位置未登记", "Layout from QMK database · strip positions unrecorded")
+              : kcSub ?? t("配列未知(固件未上游 QMK)· 示意图", "Layout unknown (firmware not upstreamed) · placeholder"),
+          board: inDb ? dev : undefined,
+          look,
+          accent,
+          // 有标定 profile:灯画在配列上,不画下层灯带
+          stripCount: profile ? 0 : perKey ? 0 : dev?.rl || 6,
+          stripLabel: dev?.rl
+            ? `UNDERGLOW ×${dev.rl}`
+            : t("灯数未知 · 示意 6 颗(VIA 协议无灯数查询)", "LED count unknown · showing 6 (VIA has no count query)"),
+          ghostKeys,
+          profileLeds: profile?.leds,
+          profileKeys: profile?.layout ? layoutByName(profile.layout) : undefined,
+          tag: profile
+            ? { text: t("已标定 · JSON", "CALIBRATED · JSON"), kind: "profile" }
+            : inDb
+              ? { text: t("QMK 数据库", "QMK DATABASE"), kind: "db" }
+              : { text: t("固件反推 · 示意", "PROBED · SKETCH"), kind: "probe" },
+        },
+        ledSel
       );
     }
   }
@@ -194,7 +273,7 @@ function render() {
     <div class="stat"><span class="k">${t("状态", "Status")}</span><span class="v">${u.valid ? (u.active ? t("🔥干活中", "🔥Working") : t("空闲", "Idle")) : t("未安装", "Not installed")}</span></div>`;
 }
 
-const PRO_BOARDS = new Set(["4753:4003"]); // 已适配 Pro 固件的板子(开源后社区扩充)
+const PRO_BOARDS = new Set(["4753:4003", "8101:5352"]); // 已适配 Pro 固件的板子(开源后社区扩充)
 
 function renderPro() {
   if (!state) return;
@@ -228,6 +307,7 @@ function fillSettings() {
   $<HTMLSelectElement>("#quota-metric").value = String(state.config.quota_metric);
   $<HTMLInputElement>("#claude-color").value = state.config.claude_color;
   $<HTMLInputElement>("#codex-color").value = state.config.codex_color;
+  $<HTMLInputElement>("#swap-rg").checked = state.config.swap_rg?.[boardKey(state.kb)] ?? false;
 }
 
 window.addEventListener("DOMContentLoaded", async () => {
@@ -249,14 +329,19 @@ window.addEventListener("DOMContentLoaded", async () => {
   });
 
   $("#save-config").addEventListener("click", () => {
+    if (!state) return;
+    const swapMap = { ...(state.config.swap_rg ?? {}) };
+    swapMap[boardKey(state.kb)] = $<HTMLInputElement>("#swap-rg").checked;
     invoke("set_config", {
       config: {
+        ...state.config, // 保留 led_roles / bar_style 等非表单配置
         claude_daily_budget: Number($<HTMLInputElement>("#claude-budget").value) || 0,
         codex_daily_budget: Number($<HTMLInputElement>("#codex-budget").value) || 0,
         warn_threshold: Math.min(100, Number($<HTMLInputElement>("#warn-threshold").value) || 80),
         quota_metric: Number($<HTMLSelectElement>("#quota-metric").value) || 0,
         claude_color: $<HTMLInputElement>("#claude-color").value,
         codex_color: $<HTMLInputElement>("#codex-color").value,
+        swap_rg: swapMap,
       },
     });
   });
@@ -278,15 +363,18 @@ window.addEventListener("DOMContentLoaded", async () => {
         claude: { valid: true, five_hour_pct: 63, weekly_pct: 17, today_tokens: 2_615_737, active: true },
         codex: { valid: true, five_hour_pct: null, weekly_pct: 1, today_tokens: 0, active: false },
       },
-      kb: {
-        mode: 0, source: 0,
-        // 浏览器调试:?pro 模拟已连接的 Pro 状态(用于截图/UI 调试)
-        connected: location.search.includes("pro"),
-        device_name: location.search.includes("pro") ? "think65v3" : null,
-        backend: location.search.includes("pro") ? "pro" : null,
-        lighting: location.search.includes("pro") ? "per-led" : null,
-        vid: 0x4753, pid: 0x4003,
-      },
+      kb: ((): KbState => {
+        // 浏览器调试:?pro 模拟 Pro 键盘;?uni 模拟库外灯带板(Skog Reboot)
+        const q = location.search;
+        const base = { mode: 0, source: 0, connected: false, device_name: null as string | null, backend: null as string | null, lighting: null as string | null, vid: 0x4753, pid: 0x4003, led_count: 0 };
+        if (q.includes("uni"))
+          return { ...base, connected: true, device_name: "PERCENT SKOG REBOOT", backend: "via", lighting: "rgblight", vid: 0x8101, pid: 0x5352, led_count: 0 };
+        if (q.includes("proskog"))
+          return { ...base, connected: true, device_name: "PERCENT SKOG REBOOT", backend: "pro", lighting: "per-led", vid: 0x8101, pid: 0x5352, led_count: 10 };
+        if (q.includes("pro"))
+          return { ...base, connected: true, device_name: "think65v3", backend: "pro", lighting: "per-led", led_count: 6 };
+        return base;
+      })(),
       config: { claude_daily_budget: 5_000_000, codex_daily_budget: 5_000_000, warn_threshold: 80, quota_metric: 0, claude_color: "#D97757", codex_color: "#10A37F" },
     };
   }
@@ -295,51 +383,15 @@ window.addEventListener("DOMContentLoaded", async () => {
   fillSettings();
   if (location.search.includes("settings")) $(".settings").setAttribute("open", "");
 
-  // ---- 灯位选区编辑(Pro 模式):点选 / 拖拽框选,下方弹出职责面板 ----
-  const preview = $("#preview");
-  let dragStart: { x: number; y: number } | null = null;
-  let dragBox: HTMLDivElement | null = null;
-
-  preview.addEventListener("pointerdown", (e) => {
-    if (!state || state.kb.backend !== "pro") return;
-    const hit = (e.target as Element).closest?.(".led-hit") as SVGGElement | null;
-    if (hit) {
-      const idx = Number(hit.dataset.idx);
-      if (ledSel.has(idx)) ledSel.delete(idx);
-      else ledSel.add(idx);
+  // 灯位选区交互(Pro 模式专属):见 select.ts
+  initLedSelection({
+    container: $("#preview"),
+    enabled: () => state?.kb.backend === "pro",
+    selection: ledSel,
+    onChange: () => {
       render();
       renderLedPanel();
-      return;
-    }
-    dragStart = { x: e.clientX, y: e.clientY };
-    dragBox = document.createElement("div");
-    dragBox.className = "drag-box";
-    document.body.appendChild(dragBox);
-  });
-
-  window.addEventListener("pointermove", (e) => {
-    if (!dragStart || !dragBox) return;
-    const x = Math.min(dragStart.x, e.clientX), y = Math.min(dragStart.y, e.clientY);
-    const w = Math.abs(e.clientX - dragStart.x), h = Math.abs(e.clientY - dragStart.y);
-    Object.assign(dragBox.style, { left: `${x}px`, top: `${y}px`, width: `${w}px`, height: `${h}px` });
-  });
-
-  window.addEventListener("pointerup", (e) => {
-    if (!dragStart) return;
-    const x1 = Math.min(dragStart.x, e.clientX), y1 = Math.min(dragStart.y, e.clientY);
-    const x2 = Math.max(dragStart.x, e.clientX), y2 = Math.max(dragStart.y, e.clientY);
-    dragBox?.remove();
-    dragBox = null;
-    dragStart = null;
-    if (x2 - x1 < 6 && y2 - y1 < 6) return; // 视为点击空白
-    if (!state || state.kb.backend !== "pro") return;
-    document.querySelectorAll<SVGGElement>("#preview .led-hit").forEach((g) => {
-      const r = g.getBoundingClientRect();
-      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
-      if (cx >= x1 && cx <= x2 && cy >= y1 && cy <= y2) ledSel.add(Number(g.dataset.idx));
-    });
-    render();
-    renderLedPanel();
+    },
   });
 
   $("#led-panel").addEventListener("click", async (e) => {
@@ -348,14 +400,14 @@ window.addEventListener("DOMContentLoaded", async () => {
     if (btn.id === "led-clear") {
       ledSel.clear();
     } else if (btn.dataset.style !== undefined) {
-      (state.config as unknown as { bar_style: number }).bar_style = Number(btn.dataset.style);
+      state.config.bar_style = Number(btn.dataset.style);
       invoke("set_led_roles", { roles: currentRoles(), style: Number(btn.dataset.style) });
     } else {
       const role = Number(btn.dataset.role);
       const roles = currentRoles();
       ledSel.forEach((i) => (roles[i] = role));
-      (state.config as unknown as { led_roles: Record<string, number[]> }).led_roles ??= {};
-      (state.config as unknown as { led_roles: Record<string, number[]> }).led_roles[boardKey(state.kb)] = roles;
+      state.config.led_roles ??= {};
+      state.config.led_roles[boardKey(state.kb)] = roles;
       // 保留选区:按钮高亮 + 摘要更新就是保存成功的确认
       invoke("set_led_roles", { roles, style: barStyle() });
     }
