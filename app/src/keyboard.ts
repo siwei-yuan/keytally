@@ -243,3 +243,62 @@ export function renderStrip(el: HTMLElement, frame: LedFrame, accent: string, na
     <text x="${w / 2}" y="16" text-anchor="middle">${name} · ${n} 灯</text>${dots}
   </svg>`;
 }
+
+// ---- 数据驱动配列(来自 QMK 数据库) ----
+
+export interface BoardData {
+  n: string;
+  rl: number;
+  keys: [number, number, number, number][]; // x,y,w,h(单位 u)
+  leds: [number, number, number][]; // rgb_matrix 灯坐标(0-224 × 0-64)+ flags
+}
+
+/// 画真实配列;rgb_matrix 板叠加真实灯点,rgblight 板在下方画灯带示意条
+export function renderBoardData(el: HTMLElement, board: BoardData, look: ViaLook, accent: string) {
+  const U2 = 36, G = 3;
+  const maxX = Math.max(...board.keys.map((k) => k[0] + k[2]), 1);
+  const maxY = Math.max(...board.keys.map((k) => k[1] + k[3]), 1);
+  const w = maxX * U2 + 8;
+  const hasStrip = board.rl > 0 && board.leds.length === 0;
+  const stripH = hasStrip ? 46 : 0;
+  const h = maxY * U2 + 8 + stripH;
+  const cls = [look.breathing ? "breathing" : "", look.blinkWarn ? "blink-warn" : "", look.color === null ? "passthrough" : ""].join(" ");
+  const fill = look.color ?? "#24262b";
+
+  // 键帽:rgb_matrix 板整板同色(通用模式所能表达的),rgblight 板键帽无光保持暗色
+  const keyFill = board.leds.length > 0 ? fill : "#1b1d21";
+  const keyCls = board.leds.length > 0 ? `uni ${cls}` : "";
+  const keys = board.keys
+    .map(([x, y, kw, kh]) =>
+      `<rect class="${keyCls}" x="${(x * U2 + G / 2 + 4).toFixed(1)}" y="${(y * U2 + G / 2 + 4).toFixed(1)}" width="${(kw * U2 - G).toFixed(1)}" height="${(kh * U2 - G).toFixed(1)}" rx="4" fill="${keyFill}" stroke="#ffffff14"/>`
+    )
+    .join("");
+
+  // rgb_matrix:真实灯点(QMK 坐标系 0-224 × 0-64 映射到板面)
+  const ledDots = board.leds
+    .map(([lx, ly]) => {
+      const cx = 4 + (lx / 224) * maxX * U2;
+      const cy = 4 + (ly / 64) * maxY * U2;
+      return `<circle class="${cls}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="3.2" fill="${look.color ?? OFF}" ${look.color ? 'filter="url(#glow3)"' : ""}/>`;
+    })
+    .join("");
+
+  // rgblight:底部灯带示意(物理位置未知)
+  let strip = "";
+  if (hasStrip) {
+    const n = board.rl;
+    const sy = maxY * U2 + 8 + 24;
+    const sp = Math.min(30, (w - 40) / n);
+    const dots = Array.from({ length: n }, (_, i) =>
+      `<circle class="${cls}" cx="${(20 + i * sp + sp / 2).toFixed(1)}" cy="${sy}" r="6" fill="${look.color ?? OFF}" ${look.color ? 'filter="url(#glow3)"' : ""}/>`
+    ).join("");
+    strip = `
+      <text x="20" y="${sy - 16}" style="letter-spacing:1.5px;font-size:9px">UNDERGLOW ×${n}</text>
+      <rect x="12" y="${sy - 12}" width="${n * sp + 16}" height="24" rx="7" fill="#14161a" stroke="#ffffff22"/>${dots}`;
+  }
+
+  el.innerHTML = `<svg viewBox="0 0 ${w} ${h}" style="--accent:${accent}">
+    <defs><filter id="glow3"><feGaussianBlur stdDeviation="2" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+    ${keys}${ledDots}${strip}
+  </svg>`;
+}

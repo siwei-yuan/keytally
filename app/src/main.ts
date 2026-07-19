@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { LED_DB } from "./led-db";
+import LED_DB_JSON from "./led-db.json";
+import type { BoardData } from "./keyboard";
+const LED_DB = LED_DB_JSON as unknown as Record<string, BoardData>;
 import { applyStaticEn, t, trProgress } from "./i18n";
 import {
   ACCENTS,
@@ -8,6 +10,7 @@ import {
   computeLeds,
   DEFAULT_ROLES,
   computeViaLook,
+  renderBoardData,
   renderKeyboard,
   renderUniversal,
   viaLookToFrame,
@@ -166,12 +169,19 @@ function render() {
     const dev = LED_DB[key];
     const look = computeViaLook(snapshot, kb.mode, kb.source, budget);
     if (!kb.connected || key === "4753:4003") {
-      // Think6.5 V3(或未连接时的默认视图):右侧徽章 6 灯
+      // Think6.5 V3(或未连接时的默认视图):右侧徽章 6 灯(手工特判的灯位)
       renderKeyboard($("#preview"), viaLookToFrame(look), look.color ?? accent);
+    } else if (dev && dev.keys.length > 0) {
+      // 在 QMK 数据库中:画真实配列;rgb_matrix 板叠真实灯点,rgblight 板画底部灯带
+      renderBoardData($("#preview"), dev, look, accent);
     } else {
-      // 其他 rgblight 键盘:按数据库的灯数画通用灯带
-      const n = dev?.rl || 6;
-      renderStrip($("#preview"), viaLookToFrame(look, n), look.color ?? accent, dev?.n ?? kb.device_name ?? "RGB");
+      // 不在数据库(如未上游的厂商固件):诚实显示未知
+      renderStrip(
+        $("#preview"),
+        viaLookToFrame(look, dev?.rl || 6),
+        look.color ?? accent,
+        `${kb.device_name ?? "RGB"} · ${t("配列未知(不在 QMK 数据库)", "layout unknown (not in QMK database)")}`
+      );
     }
   }
 
